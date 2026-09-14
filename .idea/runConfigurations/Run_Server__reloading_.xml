@@ -1,0 +1,31 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Run Server (reloading)" type="UvRunConfigurationType" factoryName="UvRunConfigurationType">
+    <option name="args">
+      <list>
+        <option value="run" />
+        <option value="--reload" />
+        <option value="--reload-dir" />
+        <option value="docsetmcp" />
+        <option value="-t" />
+        <option value="streamable-http" />
+        <option value="docsetmcp/main.py" />
+      </list>
+    </option>
+    <option name="checkSync" value="false" />
+    <option name="debugJustMyCode" value="false" />
+    <option name="env">
+      <map>
+        <entry key="DOCSET_PATH" value="/mnt/docsets/" />
+        <entry key="FASTMCP_ENABLE_RICH_LOGGING" value="false" />
+        <entry key="FASTMCP_ENABLE_RICH_TRACEBACKS" value="false" />
+      </map>
+    </option>
+    <option name="runType" value="MODULE" />
+    <option name="scriptOrModule" value="fastmcp.cli" />
+    <option name="uvArgs">
+      <list />
+    </option>
+    <option name="uvSdkKey" value="$PROJECT_DIR$/.venv" />
+    <method v="2" />
+  </configuration>
+</component>

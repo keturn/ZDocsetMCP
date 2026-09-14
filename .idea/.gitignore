@@ -11,3 +11,5 @@
 
 # I used to be a proponent of checking in .idea but I've totally lost track of what makes sense to share.
 *
+!/runConfigurations
+!/runConfigurations/*
