@@ -32,10 +32,10 @@ def main():
     parser = argparse.ArgumentParser(
         prog="docsetmcp",
         description="Model Context Protocol server for Dash-style docsets",
-        epilog="For more information, visit: https://github.com/codybrom/docsetmcp",
+        epilog="For more information, visit: https://github.com/keturn/ZDocsetMCP",
     )
 
-    parser.add_argument("--version", "-v", action="version", version=f"DocsetMCP {__version__}")
+    parser.add_argument("--version", "-v", action="version", version=f"ZDocsetMCP {__version__}")
 
     parser.add_argument(
         "--list-docsets",
