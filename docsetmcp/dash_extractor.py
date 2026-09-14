@@ -875,16 +875,9 @@ def infer_primary_language(config: ProcessedDocsetConfig) -> str:
 
 
 def initialize_docsets(server_config: DocsetMCPConfig) -> dict[str, DashExtractor]:
-    directories: list[str] = []
-    if server_config.docset_path:
-        directories.append(server_config.docset_path)
-
-    if server_config.additional_docset_paths:
-        directories.extend(server_config.parse_path_list(server_config.additional_docset_paths))
-
-    search_paths = [Path(d).expanduser().absolute() for d in directories]
-
-    docset_locations = chain.from_iterable(p.rglob("*.docset") for p in search_paths)
+    docset_locations = chain.from_iterable(
+        p.rglob("*.docset") for p in server_config.get_docset_paths()
+    )
     docset_locations = (p for p in docset_locations if p.is_dir())
 
     extractors = [DashExtractor(d) for d in docset_locations]
