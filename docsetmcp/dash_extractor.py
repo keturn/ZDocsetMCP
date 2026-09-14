@@ -878,10 +878,6 @@ def initialize_docsets(server_config: DocsetMCPConfig) -> dict[str, DashExtracto
     directories: list[str] = []
     if server_config.docset_path:
         directories.append(server_config.docset_path)
-    if from_env := os.getenv("DOCSET_PATH"):
-        directories.append(from_env)
-    if not directories:
-        directories.append("~/Library/Application Support/Dash/DocSets")
 
     if server_config.additional_docset_paths:
         directories.extend(server_config.parse_path_list(server_config.additional_docset_paths))
