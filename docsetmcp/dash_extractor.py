@@ -851,7 +851,7 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
             html_to_markdown.ConversionOptions(
                 heading_style="atx", extract_metadata=False, code_language=lang
             ),
-        )
+        ).content
 
         # Limit content length
         if len(text_content) > 2000:
