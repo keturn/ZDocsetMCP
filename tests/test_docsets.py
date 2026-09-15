@@ -4,11 +4,12 @@ Test suite for docsetmcp docset configurations
 """
 
 import os
+import sqlite3
 import sys
+from pathlib import Path
+
 import pytest
 import yaml
-import sqlite3
-from pathlib import Path
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,26 +32,6 @@ class TestDocsets:
         """Load YAML configuration file"""
         with open(yaml_path, "r") as f:
             return yaml.safe_load(f)
-
-    @pytest.mark.parametrize(
-        "yaml_path",
-        [
-            pytest.param(p, id=p.name)
-            for p in sorted((Path(__file__).parent.parent / "docsetmcp" / "docsets").glob("*.y*ml"))
-        ],
-    )
-    def test_docset_exists(self, yaml_path: Path):
-        """Test that each configured docset actually exists"""
-        config = self.load_yaml_config(yaml_path)
-
-        # Build the expected docset path
-        dash_docsets_path = os.path.expanduser("~/Library/Application Support/Dash/DocSets")
-        docset_folder = str(config.get("docset_name", ""))
-        docset_file = str(config.get("docset_path", ""))
-        full_docset_path = Path(dash_docsets_path) / docset_folder / docset_file
-
-        if not full_docset_path.exists():
-            pytest.skip(f"Docset not installed: {config.get('name', docset_folder)}")
 
     @pytest.mark.parametrize(
         "yaml_path",
