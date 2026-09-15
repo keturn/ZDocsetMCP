@@ -15,6 +15,11 @@ DEFAULT_DOCSET_PATHS = [
     "~/.var/app/org.zealdocs.Zeal/data/Zeal/Zeal/docsets",  # Zeal Flatpak on Linux
 ]
 
+DEFAULT_CHEATSHEET_PATHS = [
+    "~/Library/Application Support/Dash/Cheat Sheets",  # Dash on macOS
+    # Zeal doesn't separate cheatsheets to a different path.
+]
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,14 +41,23 @@ class DocsetMCPConfig:
                     break
                 else:
                     logger.debug("default location %s does not exist.", p)
-        self.cheatsheet_path: str | None = None
+
+        self.cheatsheet_path: Path | None = None
+        if (from_env := os.getenv("CHEATSHEET_PATH")) is not None:
+            self.set_cheatsheet_path(from_env)
+        else:
+            for p in DEFAULT_CHEATSHEET_PATHS:
+                if Path(p).expanduser().exists():
+                    self.set_cheatsheet_path(p)
+                    break
+
         self.additional_docset_paths: list[Path] = []
-        self.additional_cheatsheet_paths: list[str] = []
+        self.additional_cheatsheet_paths: list[Path] = []
 
     def get_docset_paths(self) -> list[Path]:
-        paths = []
+        paths: list[Path] = []
         if self.docset_path is not None:
-            paths.append(Path(self.docset_path))
+            paths.append(self.docset_path)
         paths.extend(self.additional_docset_paths)
         return [p.absolute() for p in paths]
 
@@ -54,14 +68,19 @@ class DocsetMCPConfig:
         path_strings = chain.from_iterable(s.split(os.pathsep) for s in input_strings)
         self.additional_docset_paths[:] = [Path(p).expanduser() for p in path_strings]
 
-    def parse_path_list(self, value: str | list[str] | None) -> list[str]:
-        """Parse path list from various input formats"""
-        if not value:
-            return []
-        if isinstance(value, list):
-            return [os.path.expanduser(p) for p in value if p.strip()]
-        # Must be str at this point since we've ruled out None and list
-        return [os.path.expanduser(p.strip()) for p in value.split(":") if p.strip()]
+    def get_cheatsheet_paths(self) -> list[Path]:
+        paths: list[Path] = []
+        if self.cheatsheet_path is not None:
+            paths.append(self.cheatsheet_path)
+        paths.extend(self.additional_cheatsheet_paths)
+        return [p.absolute() for p in paths]
+
+    def set_cheatsheet_path(self, path_str: str):
+        self.cheatsheet_path = Path(path_str).expanduser()
+
+    def set_additional_cheatsheet_paths(self, input_strings: list[str]):
+        path_strings = chain.from_iterable(s.split(os.pathsep) for s in input_strings)
+        self.additional_cheatsheet_paths[:] = [Path(p).expanduser() for p in path_strings]
 
 
 # Global config instance

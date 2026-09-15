@@ -213,7 +213,7 @@ class TestCheatsheetMCPTools:
         with patch("docsetmcp.server.CheatsheetExtractor") as mock_class:
             mock_class.side_effect = FileNotFoundError("Not found")
 
-            with patch("docsetmcp.server.list_available_cheatsheets") as mock_list:
+            with patch("docsetmcp.cheatsheet_tools.list_available_cheatsheets") as mock_list:
                 mock_list.return_value = "Available: Git, Vim"
 
                 result = search_cheatsheet("nonexistent")
@@ -299,7 +299,7 @@ class TestCheatsheetMCPTools:
         assert "Empty" not in result
 
     @patch("os.path.expanduser")
-    @patch("docsetmcp.server.Path")
+    @patch("docsetmcp.cheatsheet_tools.Path")
     def test_list_available_cheatsheets_none(
         self, mock_path_class: MagicMock, mock_expanduser: MagicMock
     ) -> None:
