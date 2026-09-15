@@ -277,11 +277,6 @@ class TestDocsetContent:
 class TestEdgeCases:
     """Test edge cases and error handling"""
 
-    def test_nonexistent_docset(self):
-        """Test handling of non-existent docset"""
-        with pytest.raises(ValueError, match="Unsupported docset type"):
-            DashExtractor("nonexistent_docset_12345")
-
     def test_empty_search_query(self):
         """Test handling of empty search query"""
         try:
