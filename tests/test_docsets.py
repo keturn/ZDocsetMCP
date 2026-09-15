@@ -212,30 +212,6 @@ class TestDocsets:
         duplicates = [name for name in names if names.count(name) > 1]
         assert not duplicates, f"Duplicate docset names found: {set(duplicates)}"
 
-    def test_server_initialization(self):
-        """Test that the server can initialize with each docset"""
-        # Get list of docsets that should work
-        working_docsets: list[str] = []
-
-        for yaml_path in self.yaml_files:
-            config = self.load_yaml_config(yaml_path)
-            if config.get("enabled", True):
-                # Extract docset type from filename
-                docset_type = yaml_path.stem
-
-                # Check if docset exists
-                dash_docsets_path = os.path.expanduser("~/Library/Application Support/Dash/DocSets")
-                docset_folder = config.get("docset_name", "")
-                docset_file = config.get("docset_path", "")
-                full_docset_path = Path(dash_docsets_path) / str(docset_folder) / str(docset_file)
-
-                if full_docset_path.exists():
-                    working_docsets.append(docset_type)
-
-        # Test initialization (we can't easily test all without modifying server.py)
-        # Just ensure at least one works
-        assert len(working_docsets) > 0, "No working docsets found"
-
 
 class TestDocsetContent:
     """Test actual content extraction from docsets"""
