@@ -32,10 +32,10 @@ def main():
     parser = argparse.ArgumentParser(
         prog="docsetmcp",
         description="Model Context Protocol server for Dash-style docsets",
-        epilog="For more information, visit: https://github.com/codybrom/docsetmcp",
+        epilog="For more information, visit: https://github.com/keturn/ZDocsetMCP",
     )
 
-    parser.add_argument("--version", "-v", action="version", version=f"DocsetMCP {__version__}")
+    parser.add_argument("--version", "-v", action="version", version=f"ZDocsetMCP {__version__}")
 
     parser.add_argument(
         "--list-docsets",
@@ -63,13 +63,13 @@ def main():
 
     parser.add_argument(
         "--additional-docset-paths",
-        nargs="*",
+        nargs="+",
         help="Additional docset paths to search in addition to default location",
     )
 
     parser.add_argument(
         "--additional-cheatsheet-paths",
-        nargs="*",
+        nargs="+",
         help="Additional cheatsheet paths to search in addition to default location",
     )
 
@@ -78,7 +78,7 @@ def main():
 
     # Update global configuration with CLI arguments
     if args.docset_path:
-        docsetmcp_config.docset_path = args.docset_path
+        docsetmcp_config.set_docset_path(args.docset_path)
         # Re-initialize extractors with new path
         initialize_extractors()
 
@@ -86,7 +86,7 @@ def main():
         docsetmcp_config.cheatsheet_path = args.cheatsheet_path
 
     if args.additional_docset_paths:
-        docsetmcp_config.additional_docset_paths = args.additional_docset_paths
+        docsetmcp_config.set_additional_docset_paths(args.additional_docset_paths)
         # Re-initialize extractors with new paths
         initialize_extractors()
 

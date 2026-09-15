@@ -1,0 +1,21 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Run Server" type="UvRunConfigurationType" factoryName="UvRunConfigurationType">
+    <option name="args">
+      <list />
+    </option>
+    <option name="checkSync" value="true" />
+    <option name="debugJustMyCode" value="false" />
+    <option name="env">
+      <map>
+        <entry key="DOCSET_PATH" value="/mnt/docsets/" />
+      </map>
+    </option>
+    <option name="runType" value="MODULE" />
+    <option name="scriptOrModule" value="docsetmcp.main" />
+    <option name="uvArgs">
+      <list />
+    </option>
+    <option name="uvSdkKey" value="$PROJECT_DIR$/.venv" />
+    <method v="2" />
+  </configuration>
+</component>

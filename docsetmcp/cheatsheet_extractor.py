@@ -6,35 +6,13 @@ from pathlib import Path
 class CheatsheetExtractor:
     """Extract content from Dash cheatsheets"""
 
-    def __init__(self, name: str, cheatsheets_base_path: str | None = None):
+    def __init__(self, name: str):
         self.name = name
 
         # Build list of paths to search for cheatsheets
-        search_paths: list[Path] = []
+        from docsetmcp.server import docsetmcp_config
 
-        # Use custom cheatsheet location if provided, otherwise use configured paths
-        if cheatsheets_base_path:
-            search_paths.append(Path(os.path.expanduser(cheatsheets_base_path)))
-        else:
-            # Check environment variable for custom location
-            env_path = os.getenv("CHEATSHEET_PATH")
-            if env_path:
-                search_paths.append(Path(os.path.expanduser(env_path)))
-
-            # Add additional paths from global config
-            from docsetmcp.server import docsetmcp_config
-
-            if docsetmcp_config.additional_cheatsheet_paths:
-                additional_paths = docsetmcp_config.parse_path_list(
-                    docsetmcp_config.additional_cheatsheet_paths
-                )
-                search_paths.extend([Path(p) for p in additional_paths])
-
-            # If no custom paths specified, use default Dash location
-            if not search_paths:
-                search_paths.append(
-                    Path(os.path.expanduser("~/Library/Application Support/Dash/Cheat Sheets"))
-                )
+        search_paths: list[Path] = docsetmcp_config.get_cheatsheet_paths()
 
         # Find the cheatsheet in the search paths
         self.cheatsheet_dir: Path | None = None
@@ -47,7 +25,6 @@ class CheatsheetExtractor:
 
         # If not found, default to first search path for error reporting
         if self.cheatsheet_dir is None:
-            self.cheatsheets_path = search_paths[0]
             raise FileNotFoundError(f"Cheatsheet '{name}' not found")
 
         # Find the .docset within the directory

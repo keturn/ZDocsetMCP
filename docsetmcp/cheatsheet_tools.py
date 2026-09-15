@@ -71,9 +71,7 @@ def search_cheatsheet(
     # Try to get or create the cheatsheet extractor
     if cheatsheet not in cheatsheet_extractors:
         try:
-            cheatsheet_extractors[cheatsheet] = CheatsheetExtractor(
-                cheatsheet, docsetmcp_config.cheatsheet_path
-            )
+            cheatsheet_extractors[cheatsheet] = CheatsheetExtractor(cheatsheet)
         except FileNotFoundError:
             available = list_available_cheatsheets()
             return f"Error: Cheatsheet '{cheatsheet}' not found.\n\n{available}"
@@ -95,9 +93,7 @@ def list_cheatsheet_categories(cheatsheet: str) -> str:
     # Try to get or create the cheatsheet extractor
     if cheatsheet not in cheatsheet_extractors:
         try:
-            cheatsheet_extractors[cheatsheet] = CheatsheetExtractor(
-                cheatsheet, docsetmcp_config.cheatsheet_path
-            )
+            cheatsheet_extractors[cheatsheet] = CheatsheetExtractor(cheatsheet)
         except FileNotFoundError:
             return f"Error: Cheatsheet '{cheatsheet}' not found."
 
@@ -133,9 +129,7 @@ def fetch_cheatsheet(cheatsheet: str) -> str:
     # Try to get or create the cheatsheet extractor
     if cheatsheet not in cheatsheet_extractors:
         try:
-            cheatsheet_extractors[cheatsheet] = CheatsheetExtractor(
-                cheatsheet, docsetmcp_config.cheatsheet_path
-            )
+            cheatsheet_extractors[cheatsheet] = CheatsheetExtractor(cheatsheet)
         except FileNotFoundError:
             available = list_available_cheatsheets()
             return f"Error: Cheatsheet '{cheatsheet}' not found.\n\n{available}"
