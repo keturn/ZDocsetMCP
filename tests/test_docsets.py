@@ -1,20 +1,15 @@
-#!/usr/bin/env python3
 """
 Test suite for docsetmcp docset configurations
 """
 
 import os
 import sqlite3
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from docsetmcp.dash_extractor import DashExtractor
+import docsetmcp.server
 
 
 class TestDocsets:
@@ -63,7 +58,6 @@ class TestDocsets:
             extractor = TestDashExtractor(docset_folder, config)
         except FileNotFoundError:
             pytest.skip(f"Docset not installed: {config.get('name', docset_folder)}")
-            return
 
         # Try various common search queries
         test_queries = [
@@ -113,7 +107,7 @@ class TestDocsets:
 
         # Get configured types (excluding 'default')
         types_dict = config.get("types", {})
-        configured_types = [t for t in types_dict.keys() if t != "default"]
+        configured_types = [t for t in types_dict if t != "default"]
 
         if not configured_types:
             pytest.skip("No types configured")
@@ -148,7 +142,6 @@ class TestDocsets:
             conn.close()
         except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
             pytest.skip(f"Database error for {config.get('name', docset_folder)}: {e}")
-            return
 
         # Check each configured type
         missing_types: list[str] = []
@@ -213,223 +206,215 @@ class TestDocsets:
         assert not duplicates, f"Duplicate docset names found: {set(duplicates)}"
 
 
+@pytest.fixture(scope="module")
+def real_docsets():
+    orig_config = docsetmcp.server.docsetmcp_config
+    try:
+        docsetmcp.server.docsetmcp_config = docsetmcp.server.DocsetMCPConfig()
+        docsetmcp.server.initialize_extractors()
+        yield docsetmcp.server.extractors
+    finally:
+        docsetmcp.server.docsetmcp_config = orig_config
+
+
 class TestDocsetContent:
     """Test actual content extraction from docsets"""
 
-    def test_apple_documentation(self):
+    def test_apple_documentation(self, real_docsets):
         """Test Apple documentation extraction"""
         try:
-            extractor = DashExtractor("apple_api_reference")
+            extractor = real_docsets["apple_api_reference"]
+        except KeyError:
+            pytest.skip("Apple docset not installed")
+        else:
             result = extractor.search("URLSession", language="swift", max_results=1)
             assert "URLSession" in result
             assert "class" in result.lower() or "protocol" in result.lower()
-        except FileNotFoundError:
-            pytest.skip("Apple docset not installed")
 
-    def test_nodejs_documentation(self):
+    def test_nodejs_documentation(self, real_docsets):
         """Test Node.js documentation extraction"""
         try:
-            extractor = DashExtractor("nodejs")
+            extractor = real_docsets["nodejs"]
+        except KeyError:
+            pytest.skip(f"Node.js docset not installed: {list(real_docsets.keys())}")
+        else:
             result = extractor.search("readFile", language="javascript", max_results=1)
             assert "readFile" in result or "fs" in result
-        except FileNotFoundError, ValueError:
-            pytest.skip("Node.js docset not installed")
 
-    def test_python_documentation(self):
+    def test_python_documentation(self, real_docsets):
         """Test Python documentation extraction"""
         # Try both Python 3 and general Python
         for docset_name in ["python_3", "python3", "python"]:
             try:
-                extractor = DashExtractor(docset_name)
+                extractor = real_docsets[docset_name]
+            except KeyError:
+                continue
+            else:
                 result = extractor.search("list", language="python", max_results=1)
                 assert "list" in result.lower()
                 return  # Success, exit
-            except FileNotFoundError, ValueError:
-                continue
 
-        pytest.skip("Python docset not installed")
+        pytest.skip(f"Python docset not installed: {list(real_docsets.keys())}")
+
+
+@pytest.fixture
+def apple_api_reference(real_docsets):
+    try:
+        return real_docsets["apple_api_reference"]
+    except KeyError:
+        pytest.skip("Apple docset not installed")
 
 
 class TestEdgeCases:
     """Test edge cases and error handling"""
 
-    def test_empty_search_query(self):
+    def test_empty_search_query(self, apple_api_reference):
         """Test handling of empty search query"""
-        try:
-            extractor = DashExtractor("apple_api_reference")
-            result = extractor.search("", language="swift", max_results=1)
-            # Should return no results or error message
-            assert (
-                "No matches found" in result
-                or "Error" in result
-                or "couldn't extract documentation" in result
-            )
-        except FileNotFoundError:
-            pytest.skip("Apple docset not installed")
+        result = apple_api_reference.search("", language="swift", max_results=1)
+        # Should return no results or error message
+        assert (
+            "No matches found" in result
+            or "Error" in result
+            or "couldn't extract documentation" in result
+        )
 
-    def test_special_characters_in_search(self):
+    def test_special_characters_in_search(self, apple_api_reference):
         """Test handling of special characters in search"""
-        try:
-            extractor = DashExtractor("apple_api_reference")
-            # Test with various special characters
-            for query in ["@#$%", "<<<", "'''", '"""']:
-                result = extractor.search(query, language="swift", max_results=1)
-                # Should handle gracefully without crashing
-                assert isinstance(result, str)
-        except FileNotFoundError:
-            pytest.skip("Apple docset not installed")
+        for query in ["@#$%", "<<<", "'''", '"""']:
+            result = apple_api_reference.search(query, language="swift", max_results=1)
+            # Should handle gracefully without crashing
+            assert isinstance(result, str)
 
-    def test_fuzzy_search_normalization(self):
+    def test_fuzzy_search_normalization(self, apple_api_reference):
         """Test that fuzzy search works with spaces and case variations"""
-        try:
-            extractor = DashExtractor("apple_api_reference")
+        extractor = apple_api_reference
 
-            # Test space normalization - "App Intent" should find "AppIntent"
-            result1 = extractor.search("App Intent", language="swift", max_results=1)
-            result2 = extractor.search("AppIntent", language="swift", max_results=1)
-            result3 = extractor.search("app intent", language="swift", max_results=1)
+        # Test space normalization - "App Intent" should find "AppIntent"
+        result1 = extractor.search("App Intent", language="swift", max_results=1)
+        result2 = extractor.search("AppIntent", language="swift", max_results=1)
+        result3 = extractor.search("app intent", language="swift", max_results=1)
 
-            # All three should return results (or same error if not found)
-            assert "AppIntent" in result1 or "AppIntent" in result2 or "AppIntent" in result3
+        # All three should return results (or same error if not found)
+        assert "AppIntent" in result1 or "AppIntent" in result2 or "AppIntent" in result3
 
-            # Test another example
-            result4 = extractor.search("URL Session", language="swift", max_results=1)
-            result5 = extractor.search("URLSession", language="swift", max_results=1)
+        # Test another example
+        result4 = extractor.search("URL Session", language="swift", max_results=1)
+        result5 = extractor.search("URLSession", language="swift", max_results=1)
 
-            # Both should work
-            assert "URLSession" in result4 or "URLSession" in result5
+        # Both should work
+        assert "URLSession" in result4 or "URLSession" in result5
 
-        except FileNotFoundError:
-            pytest.skip("Apple docset not installed")
-
-    def test_case_insensitive_search(self):
+    def test_case_insensitive_search(self, apple_api_reference):
         """Test that search is case-insensitive"""
-        try:
-            extractor = DashExtractor("apple_api_reference")
+        extractor = apple_api_reference
 
-            # Test different case variations
-            result_lower = extractor.search("urlsession", language="swift", max_results=1)
-            result_upper = extractor.search("URLSESSION", language="swift", max_results=1)
-            result_mixed = extractor.search("UrlSession", language="swift", max_results=1)
+        # Test different case variations
+        result_lower = extractor.search("urlsession", language="swift", max_results=1)
+        result_upper = extractor.search("URLSESSION", language="swift", max_results=1)
+        result_mixed = extractor.search("UrlSession", language="swift", max_results=1)
 
-            # All should find URLSession
-            for result in [result_lower, result_upper, result_mixed]:
-                assert "URLSession" in result or "No matches found" in result
+        # All should find URLSession
+        for result in [result_lower, result_upper, result_mixed]:
+            assert "URLSession" in result or "No matches found" in result
 
-        except FileNotFoundError:
-            pytest.skip("Apple docset not installed")
-
-    def test_improved_error_messages(self):
+    def test_improved_error_messages(self, apple_api_reference):
         """Test that error messages distinguish between no matches and extraction failures"""
-        try:
-            extractor = DashExtractor("apple_api_reference")
+        # Search for something that definitely doesn't exist
+        result = apple_api_reference.search("xyzabc123nonexistent", language="swift", max_results=1)
 
-            # Search for something that definitely doesn't exist
-            result = extractor.search("xyzabc123nonexistent", language="swift", max_results=1)
+        # Should say "No matches found" not "couldn't extract documentation"
+        assert "No matches found" in result
+        assert "couldn't extract documentation" not in result
 
-            # Should say "No matches found" not "couldn't extract documentation"
-            assert "No matches found" in result
-            assert "couldn't extract documentation" not in result
-
-        except FileNotFoundError:
-            pytest.skip("Apple docset not installed")
-
-    def test_carplay_search_comprehensive(self):
+    def test_carplay_search_comprehensive(self, apple_api_reference):
         """Test that CarPlay search returns framework and related entries like Dash"""
-        try:
-            extractor = DashExtractor("apple_api_reference")
+        extractor = apple_api_reference
 
-            # Get the SQLite connection to examine raw results
-            conn = sqlite3.connect(extractor.search_index_db)
-            cursor = conn.cursor()
+        # Get the SQLite connection to examine raw results
+        conn = sqlite3.connect(extractor.search_index_db)
+        cursor = conn.cursor()
 
-            # First, let's see what's actually in the database for CarPlay
-            cursor.execute("""
-                SELECT name, type, path
-                FROM searchIndex
-                WHERE name LIKE '%CarPlay%'
-                ORDER BY
-                    CASE
-                        WHEN name = 'CarPlay' THEN 0
-                        WHEN name LIKE 'CarPlay%' THEN 1
-                        ELSE 2
-                    END,
-                    LENGTH(name)
-                LIMIT 50
-            """)
+        # First, let's see what's actually in the database for CarPlay
+        cursor.execute("""
+            SELECT name, type, path
+            FROM searchIndex
+            WHERE name LIKE '%CarPlay%'
+            ORDER BY
+                CASE
+                    WHEN name = 'CarPlay' THEN 0
+                    WHEN name LIKE 'CarPlay%' THEN 1
+                    ELSE 2
+                END,
+                LENGTH(name)
+            LIMIT 50
+        """)
 
-            db_results = cursor.fetchall()
-            conn.close()
+        db_results = cursor.fetchall()
+        conn.close()
 
-            print(f"\nFound {len(db_results)} CarPlay-related entries in database:")
-            for name, doc_type, path in db_results[:10]:
-                print(f"  - {name} ({doc_type}) - {path[:80]}...")
+        print(f"\nFound {len(db_results)} CarPlay-related entries in database:")
+        for name, doc_type, path in db_results[:10]:
+            print(f"  - {name} ({doc_type}) - {path[:80]}...")
 
-            # Now test our search implementation with more debugging
-            print("\nTesting search implementation...")
-            result = extractor.search("CarPlay", language="swift", max_results=30)
+        # Now test our search implementation with more debugging
+        print("\nTesting search implementation...")
+        result = extractor.search("CarPlay", language="swift", max_results=30)
 
-            # Print what we actually got back
-            print(f"\nSearch result length: {len(result)} characters")
-            print(f"First 1000 chars of result:\n{result[:1000]}")
+        # Print what we actually got back
+        print(f"\nSearch result length: {len(result)} characters")
+        print(f"First 1000 chars of result:\n{result[:1000]}")
 
-            # Count how many documentation entries we got (separated by ---)
-            entry_count = (
-                result.count("\n\n---\n\n") + 1
-                if result and "---" not in result
-                else result.count("\n\n---\n\n")
+        # Count how many documentation entries we got (separated by ---)
+        entry_count = (
+            result.count("\n\n---\n\n") + 1
+            if result and "---" not in result
+            else result.count("\n\n---\n\n")
+        )
+        print(f"\nNumber of documentation entries returned: {entry_count}")
+
+        # Check that we found results
+        assert "No matches found" not in result, "Should find CarPlay entries"
+
+        # Check for the main CarPlay framework entry
+        assert "CarPlay" in result, "Should find main CarPlay framework"
+
+        # Check for expected name-matching entries (items that actually contain "CarPlay" in their name)
+        expected_entries = [
+            "carPlay",  # Property from User Notifications
+            "carPlaySetting",  # Property from User Notifications
+            "allowInCarPlay",  # Property from User Notifications
+            "CarPlay Constants",  # Guide
+            "CarPlay Navigation",  # Guide
+        ]
+
+        found_entries: list[str] = []
+        for entry in expected_entries:
+            if entry in result:
+                found_entries.append(entry)
+
+        print(
+            f"\nFound {len(found_entries)} of {len(expected_entries)} expected name-matching entries"
+        )
+        print(f"Found entries: {found_entries}")
+
+        # We should find at least some name-matching entries
+        assert len(found_entries) > 0, (
+            f"Should find entries with 'CarPlay' in their names. Result:\n{result[:500]}..."
+        )
+
+        # Check that the framework has a drilldown note
+        assert "additional members not shown" in result, "Framework should show drilldown note"
+        assert "search_docs('CarPlay'" in result or "list_entries" in result, (
+            "Should provide drilldown guidance"
+        )
+
+        # Test that ranking works - exact match should come before prefix/substring matches
+        if "CarPlay" in result and "carPlay" in result:
+            framework_pos = result.index("# CarPlay\n")  # Framework entry
+            property_pos = result.index("carPlay")  # Property entry
+            assert framework_pos < property_pos, (
+                "Exact match 'CarPlay' framework should come before 'carPlay' property"
             )
-            print(f"\nNumber of documentation entries returned: {entry_count}")
-
-            # Check that we found results
-            assert "No matches found" not in result, "Should find CarPlay entries"
-
-            # Check for the main CarPlay framework entry
-            assert "CarPlay" in result, "Should find main CarPlay framework"
-
-            # Check for expected name-matching entries (items that actually contain "CarPlay" in their name)
-            expected_entries = [
-                "carPlay",  # Property from User Notifications
-                "carPlaySetting",  # Property from User Notifications
-                "allowInCarPlay",  # Property from User Notifications
-                "CarPlay Constants",  # Guide
-                "CarPlay Navigation",  # Guide
-            ]
-
-            found_entries: list[str] = []
-            for entry in expected_entries:
-                if entry in result:
-                    found_entries.append(entry)
-
-            print(
-                f"\nFound {len(found_entries)} of {len(expected_entries)} expected name-matching entries"
-            )
-            print(f"Found entries: {found_entries}")
-
-            # We should find at least some name-matching entries
-            assert len(found_entries) > 0, (
-                f"Should find entries with 'CarPlay' in their names. Result:\n{result[:500]}..."
-            )
-
-            # Check that the framework has a drilldown note
-            assert "additional members not shown" in result, "Framework should show drilldown note"
-            assert "search_docs('CarPlay'" in result or "list_entries" in result, (
-                "Should provide drilldown guidance"
-            )
-
-            # Test that ranking works - exact match should come before prefix/substring matches
-            if "CarPlay" in result and "carPlay" in result:
-                framework_pos = result.index("# CarPlay\n")  # Framework entry
-                property_pos = result.index("carPlay")  # Property entry
-                assert framework_pos < property_pos, (
-                    "Exact match 'CarPlay' framework should come before 'carPlay' property"
-                )
-
-        except FileNotFoundError:
-            pytest.skip("Apple docset not installed")
-        except Exception as e:
-            print(f"Error during test: {e}")
-            raise
 
 
 if __name__ == "__main__":

@@ -4,11 +4,11 @@ import io
 import json
 import logging
 import mmap
-import os
 import plistlib
 import re
 import sqlite3
 import tarfile
+import typing
 from compression import zlib
 from dataclasses import dataclass
 from itertools import chain
@@ -24,7 +24,10 @@ import html_to_markdown
 from docsetmcp.common import AppleDocumentation, ContentItem, ProcessedDocsetConfig
 from docsetmcp.config_loader import ConfigLoader
 from docsetmcp.db_util import connect_readonly, escape_like_pattern, make_unique
-from docsetmcp.server import DocsetMCPConfig
+
+if typing.TYPE_CHECKING:
+    from docsetmcp.server import DocsetMCPConfig
+
 
 logger = logging.getLogger(__name__)
 
