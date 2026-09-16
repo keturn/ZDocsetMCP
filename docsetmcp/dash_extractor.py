@@ -726,17 +726,11 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                 f"Invalid path: {url.path!r} must be within docset Documents directory"
             )
         with full_path.open() as html_file:
-            soup: bs4.Tag = bs4.BeautifulSoup(html_file)
-
-        if url.fragment and (
-            target := (soup.find(id=url.fragment) or soup.find("a", attrs={"name": url.fragment}))
-        ):
-            # The target is typically an anchor or a heading. Move up to its container element for relevant context.
-            # wtf pycharm. https://youtrack.jetbrains.com/issue/PY-88479
-            # noinspection PyUnboundLocalVariable
-            soup = target.parent or target
-
-        return soup.decode()
+            html = html_file.read()
+            if url.fragment:
+                return extract_html_for_anchor(html_file.read(), url.fragment)
+            else:
+                return html
 
     def _extract_from_tarix(self, search_path: str) -> str | None:
         """Extract HTML content from tarix archive"""
@@ -864,6 +858,16 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
             lines.append(text_content)
 
         return "\n".join(lines)
+
+
+def extract_html_for_anchor(html: str, anchor: str):
+    soup: bs4.Tag = bs4.BeautifulSoup(html)
+
+    if target := (soup.find(id=anchor) or soup.find("a", attrs={"name": anchor})):
+        # The target is typically an anchor or a heading. Move up to its container element for relevant context.
+        soup = target.parent or target
+
+    return soup.decode()
 
 
 def infer_primary_language(config: ProcessedDocsetConfig) -> str:
