@@ -84,7 +84,7 @@ class DocsetMCPConfig:
 
 
 # Global config instance
-docsetmcp_config = DocsetMCPConfig()
+docsetmcp_config: DocsetMCPConfig = DocsetMCPConfig()
 
 from docsetmcp.cheatsheet_extractor import CheatsheetExtractor
 from docsetmcp.dash_extractor import DashExtractor, initialize_docsets

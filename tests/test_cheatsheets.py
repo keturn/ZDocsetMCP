@@ -103,23 +103,18 @@ class TestCheatsheetExtractor:
 class TestCheatsheetMCPTools:
     """Test MCP tool functions"""
 
-    def test_search_cheatsheet_success(self) -> None:
+    def test_search_cheatsheet_success(self, monkeypatch) -> None:
         """Test successful cheatsheet search"""
-        # Clear existing extractors
-        # Access the global extractors dict from server module
-        if hasattr(docsetmcp.server, "cheatsheet_extractors"):
-            docsetmcp.server.cheatsheet_extractors.clear()
+        mock_instance = MagicMock(CheatsheetExtractor)
+        mock_instance.search.return_value = "# Example Cheatsheet\n## Results"
 
-        with patch("docsetmcp.server.CheatsheetExtractor") as mock_class:
-            mock_instance = MagicMock()
-            mock_instance.search.return_value = "# Git Cheatsheet\n## Results"
-            mock_class.return_value = mock_instance
+        monkeypatch.setitem(docsetmcp.server.cheatsheet_extractors, "example", mock_instance)
 
-            result = search_cheatsheet("git", query="branch")
+        result = search_cheatsheet("example", query="branch")
 
-            assert "# Git Cheatsheet" in result
-            assert "## Results" in result
-            mock_instance.search.assert_called_once_with("branch", "", 10)
+        assert "# Example Cheatsheet" in result
+        assert "## Results" in result
+        mock_instance.search.assert_called_once_with("branch", "", 10)
 
     def test_search_cheatsheet_not_found(self) -> None:
         """Test cheatsheet not found"""
@@ -161,58 +156,19 @@ class TestCheatsheetMCPTools:
         result = search_cheatsheet("git", max_results=0)
         assert "Error: max_results must be between 1 and 50" in result
 
-    @patch("os.path.expanduser")
-    @patch("docsetmcp.server.Path")
-    def test_list_available_cheatsheets(
-        self, mock_path_class: MagicMock, mock_expanduser: MagicMock
-    ) -> None:
+    def test_list_available_cheatsheets(self, monkeypatch) -> None:
         """Test listing available cheatsheets"""
-        mock_expanduser.return_value = "/mock/path"
-
-        # Create mock path
-        mock_path = MagicMock()
-        mock_path_class.return_value = mock_path
-        mock_path.exists.return_value = True
-
-        # Create mock directories with sorting support
-        git_dir = MagicMock()
-        git_dir.name = "Git"
-        git_dir.is_dir.return_value = True
-        git_dir.glob.return_value = [MagicMock()]  # Has docset
-
-        def git_lt(self: MagicMock, other: MagicMock) -> bool:
-            return self.name < other.name
-
-        git_dir.__lt__ = git_lt
-
-        vim_dir = MagicMock()
-        vim_dir.name = "Vim"
-        vim_dir.is_dir.return_value = True
-        vim_dir.glob.return_value = [MagicMock()]  # Has docset
-
-        def vim_lt(self: MagicMock, other: MagicMock) -> bool:
-            return self.name < other.name
-
-        vim_dir.__lt__ = vim_lt
-
-        empty_dir = MagicMock()
-        empty_dir.name = "Empty"
-        empty_dir.is_dir.return_value = True
-        empty_dir.glob.return_value = []  # No docset
-
-        def empty_lt(self: MagicMock, other: MagicMock) -> bool:
-            return self.name < other.name
-
-        empty_dir.__lt__ = empty_lt
-
-        # Make iterdir return our mocks
-        mock_path.iterdir.return_value = [git_dir, vim_dir, empty_dir]
-
+        monkeypatch.setitem(
+            docsetmcp.server.cheatsheet_extractors, "Example", MagicMock(CheatsheetExtractor)
+        )
+        monkeypatch.setitem(
+            docsetmcp.server.cheatsheet_extractors, "Sample", MagicMock(CheatsheetExtractor)
+        )
         result = list_available_cheatsheets()
 
         assert "Available cheatsheets:" in result
-        assert "**git**: Git" in result
-        assert "**vim**: Vim" in result
+        assert "**example**: Example" in result
+        assert "**sample**: Sample" in result
         assert "Empty" not in result
 
     @patch("os.path.expanduser")
@@ -230,21 +186,6 @@ class TestCheatsheetMCPTools:
 
         result = list_available_cheatsheets()
         assert "No cheatsheets found" in result
-
-    @patch("os.path.expanduser")
-    @patch("docsetmcp.server.Path")
-    def test_list_available_cheatsheets_no_dir(
-        self, mock_path_class: MagicMock, mock_expanduser: MagicMock
-    ) -> None:
-        """Test when cheatsheets directory doesn't exist"""
-        mock_expanduser.return_value = "/mock/path"
-
-        mock_path = MagicMock()
-        mock_path_class.return_value = mock_path
-        mock_path.exists.return_value = False
-
-        result = list_available_cheatsheets()
-        assert "Cheatsheets directory not found" in result
 
 
 if __name__ == "__main__":

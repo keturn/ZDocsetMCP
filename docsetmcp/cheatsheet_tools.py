@@ -16,29 +16,11 @@ def list_available_cheatsheets() -> str:
         List of available cheatsheets
     """
     # Use configured cheatsheet path or default
-    if docsetmcp_config.cheatsheet_path:
-        cheatsheets_path = Path(os.path.expanduser(docsetmcp_config.cheatsheet_path))
-    else:
-        # Check environment variable
-        env_path = os.getenv("CHEATSHEET_PATH")
-        if env_path:
-            cheatsheets_path = Path(os.path.expanduser(env_path))
-        else:
-            cheatsheets_path = Path(
-                os.path.expanduser("~/Library/Application Support/Dash/Cheat Sheets")
-            )
-
-    if not cheatsheets_path.exists():
-        return f"Cheatsheets directory not found at {cheatsheets_path}."
-
     cheatsheets: list[str] = []
-    for path in sorted(cheatsheets_path.iterdir()):
-        if path.is_dir() and list(path.glob("*.docset")):
-            # Extract simple name from directory
-            name = path.name
-            # Try to make it more command-friendly
-            simple_name = name.lower().replace(" ", "-")
-            cheatsheets.append(f"- **{simple_name}**: {name}")
+    for name in cheatsheet_extractors:
+        # Try to make it more command-friendly
+        simple_name = name.lower().replace(" ", "-")
+        cheatsheets.append(f"- **{simple_name}**: {name}")
 
     if not cheatsheets:
         return "No cheatsheets found. Please download some from Dash."
