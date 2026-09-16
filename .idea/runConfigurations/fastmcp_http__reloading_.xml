@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Run Server (reloading)" type="UvRunConfigurationType" factoryName="UvRunConfigurationType">
+  <configuration default="false" name="fastmcp http (reloading)" type="UvRunConfigurationType" factoryName="UvRunConfigurationType">
     <option name="args">
       <list>
         <option value="run" />
