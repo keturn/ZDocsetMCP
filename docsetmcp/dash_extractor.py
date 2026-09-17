@@ -9,6 +9,7 @@ import re
 import sqlite3
 import tarfile
 import typing
+from abc import ABCMeta, abstractmethod
 from compression import zlib
 from dataclasses import dataclass
 from itertools import chain
@@ -32,13 +33,18 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class DashExtractor:
+class DashExtractor(metaclass=ABCMeta):
     _config: ProcessedDocsetConfig
     path: Path
     identifiers: list[str]
     titles: list[str]
     description: str | None = None
     primary_language: str
+
+    @classmethod
+    @abstractmethod
+    def is_format(cls, path: Path) -> bool:
+        raise NotImplementedError()
 
     def __init__(self, path: Path):
         self.path: Path = path
@@ -84,19 +90,6 @@ class DashExtractor:
             self.search_index_db = resources / "optimizedIndex.dsidx"
         else:
             self.search_index_db = resources / "docSet.dsidx"
-
-        if self._config["format"] == "apple":
-            self.fs_dir = resources / "Documents" / "fs"
-            self.cache_db = resources / "cache.db"
-            # Cache for decompressed fs files
-            self.fs_cache: dict[int, bytes] = {}
-        elif (resources / "tarix.tgz").exists():
-            self.tarix_archive = resources / "tarix.tgz"
-            self.tarix_index = resources / "tarixIndex.db"
-            # Cache for extracted HTML content
-            self.html_cache: dict[str, str] = {}
-        else:
-            self.tarix_archive = None
 
     @property
     def id(self) -> str:
@@ -349,54 +342,17 @@ class DashExtractor:
         results: list[str] = []
         for row in db_results[:max_results]:
             name, doc_type, path, *_ = row
-            if self._config["format"] == "apple":
-                if "request_key=" in path:
-                    request_key: str = path.split("request_key=")[1].split("#")[0]
-                    # Remove any language parameter from request_key
-                    if "&" in request_key:
-                        request_key = request_key.split("&")[0]
-
-                    # If path contains language parameter, use that instead
-                    path_language: str = language
-                    if "&language=" in path:
-                        path_language = path.split("&language=")[1].split("&")[0].split("#")[0]
-
-                    doc = self._extract_by_request_key(request_key, path_language)
-
-                    if doc:
-                        markdown = self._format_as_markdown(doc, name, doc_type)
-
-                        # Add member note if this is the exact match and has members
-                        if (
-                            found_exact_match
-                            and name == exact_match_name
-                            and doc_type == exact_match_type
-                            and additional_members > 0
-                        ):
-                            type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', language='{language}', max_results=50)` to see all {exact_match_name} members."
-                            markdown += type_note
-
-                        results.append(markdown)
-            else:
-                if self.tarix_archive:
-                    html_content = self._extract_from_tarix(path)
-                else:
-                    html_content = self._extract_by_path(path)
-
-                if html_content:
-                    markdown = self._format_html_as_markdown(html_content, name, doc_type, path)
-
-                    # Add member note if this is the exact match and has members
-                    if (
-                        found_exact_match
-                        and name == exact_match_name
-                        and doc_type == exact_match_type
-                        and additional_members > 0
-                    ):
-                        type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', language='{language}', max_results=50)` to see all {exact_match_name} members."
-                        markdown += type_note
-
-                    results.append(markdown)
+            if (markdown := self.entry_as_markdown(name, doc_type, path, language)) is not None:
+                # Add member note if this is the exact match and has members
+                if (
+                    found_exact_match
+                    and name == exact_match_name
+                    and doc_type == exact_match_type
+                    and additional_members > 0
+                ):
+                    type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', language='{language}', max_results=50)` to see all {exact_match_name} members."
+                    markdown += type_note
+                results.append(markdown)
 
         # Handle different result counts appropriately
         if results:
@@ -470,6 +426,9 @@ Found but couldn't extract:
 
 Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downloaded."""
 
+    @abstractmethod
+    def entry_as_markdown(self, name: str, doc_type: str, path: str, language) -> str | None: ...
+
     def list_frameworks(self, filter_text: str | None = None) -> str:
         """List available frameworks/modules"""
         conn, cursor = self._search_index()
@@ -536,6 +495,220 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
             return f"Available {label} ({len(frameworks)} total):\n" + "\n".join(
                 f"- {f}" for f in frameworks
             )
+
+    def _format_html_as_markdown(
+        self, html_content: str, name: str, doc_type: str, path: str
+    ) -> str:
+        """Convert HTML documentation to Markdown"""
+        # fmt: off
+        lines: list[str] = [dedent(f"""\
+            ---
+            Title: {name}
+            Type: {doc_type}
+            Document-Source: {path}
+            ---
+            """)]
+        # fmt: on
+
+        lang = next(iter(self._config["languages"].keys()), "")
+        text_content = html_to_markdown.convert(
+            html_content,
+            html_to_markdown.ConversionOptions(
+                heading_style="atx", extract_metadata=False, code_language=lang
+            ),
+        ).content
+
+        # Limit content length
+        if len(text_content) > 2000:
+            text_content = text_content[:2000] + "..."
+
+        if text_content:
+            lines.append(text_content)
+
+        return "\n".join(lines)
+
+
+class FileSystemDirectoryExtractor(DashExtractor):
+    @classmethod
+    def is_format(cls, path: Path) -> bool:
+        resources = path / "Contents" / "Resources"
+        return (resources / "Documents").exists()
+
+    def entry_as_markdown(self, name: str, doc_type: str, path: str, language: str) -> str | None:
+        html_content = self._extract_by_path(path)
+
+        if not html_content:
+            return None
+
+        return self._format_html_as_markdown(html_content, name, doc_type, path)
+
+    def _extract_by_path(self, html_path: str) -> str:
+        """Extract HTML content from flat files."""
+        url = urlsplit(html_path)
+        assert url.netloc == ""
+        full_path = self.documents_path / Path(url.path)
+        if not full_path.resolve(strict=True).is_relative_to(self.documents_path):
+            raise ValueError(
+                f"Invalid path: {url.path!r} must be within docset Documents directory"
+            )
+        with full_path.open() as html_file:
+            html = html_file.read()
+            if url.fragment:
+                return extract_html_for_anchor(html_file.read(), url.fragment)
+            else:
+                return html
+
+
+class TarixExtractor(DashExtractor):
+    @classmethod
+    def is_format(cls, path: Path) -> bool:
+        resources = path / "Contents" / "Resources"
+        return (resources / "tarix.tgz").exists()
+
+    def __init__(self, path: Path):
+        super().__init__(path)
+        resources = path / "Contents" / "Resources"
+        self.tarix_archive = resources / "tarix.tgz"
+        self.tarix_index = resources / "tarixIndex.db"
+        # Cache for extracted HTML content
+        self.html_cache: dict[str, str] = {}
+
+    def entry_as_markdown(self, name: str, doc_type: str, path: str, language: str) -> str | None:
+        html_content = self._extract_from_tarix(path)
+
+        if not html_content:
+            return None
+
+        return self._format_html_as_markdown(html_content, name, doc_type, path)
+
+    def _extract_from_tarix(self, search_path: str) -> str | None:
+        """Extract HTML content from tarix archive"""
+        # Remove anchor from path
+        clean_path = search_path.split("#")[0]
+
+        # Handle special Dash metadata paths (like in C docset)
+        if clean_path.startswith("<dash_entry_"):
+            # Extract the actual file path from the end of the path
+            # Format: <dash_entry_...>actual/file/path.html
+            parts = clean_path.split(">")
+            if len(parts) > 1:
+                clean_path = parts[-1]  # Get the actual file path after the last >
+
+        # Check cache first
+        if clean_path in self.html_cache:
+            return self.html_cache[clean_path]
+
+        try:
+            raw_file = self._extract_raw_from_tarix(search_path)[0]
+            if raw_file is not None:
+                content = raw_file.decode("utf-8", errors="ignore")
+                self.html_cache[clean_path] = content
+                return content
+
+        except FileNotFoundError:
+            pass
+
+        return None
+
+    def _extract_raw_from_tarix(self, search_path: str) -> tuple[bytes, int] | None:
+        # Remove anchor from path
+        clean_path = search_path.split("#")[0]
+
+        # Handle special Dash metadata paths (like in C docset)
+        if clean_path.startswith("<dash_entry_"):
+            # Extract the actual file path from the end of the path
+            # Format: <dash_entry_...>actual/file/path.html
+            parts = clean_path.split(">")
+            if len(parts) > 1:
+                clean_path = parts[-1]  # Get the actual file path after the last >
+
+        # Build full docset path
+        # Extract docset folder name from docset_path (e.g., "NodeJS/NodeJS.docset" -> "NodeJS.docset")
+        docset_folder = self._config["docset_path"].split("/")[-1]
+        full_path = f"{docset_folder}/Contents/Resources/Documents/{clean_path}"
+
+        if self.tarix_index.exists():
+            record = self._get_tarix_index(full_path)
+            if record:
+                return self._tarix_extract_by_index(record.offset, record.size)
+
+        return self._tarix_extract_as_tar(full_path, clean_path)
+
+    def _tarix_extract_by_index(self, offset: int, size: int) -> tuple[bytes, int]:
+        TAR_BLOCK_SIZE = 512
+        with open(self.tarix_archive, "rb") as compressed_file:
+            mm = mmap.mmap(
+                compressed_file.fileno(),
+                0,
+                access=mmap.ACCESS_READ,
+            )[offset : offset + size * TAR_BLOCK_SIZE]
+            decompressor = zlib.decompressobj(wbits=-zlib.MAX_WBITS)  # cspell:ignore wbits
+            decompressed_blocks = decompressor.decompress(mm)
+            with tarfile.open(mode="r:", fileobj=io.BytesIO(decompressed_blocks)) as tar:
+                member = tar.next()
+                return tar.extractfile(member).read(), member.mtime
+
+    def _tarix_extract_as_tar(self, full_path: str, clean_path: str) -> tuple[bytes, int] | None:
+        with tarfile.open(self.tarix_archive, "r:gz") as tar:
+            try:
+                target_member = tar.getmember(full_path)
+                if (reader := tar.extractfile(target_member)) is not None:
+                    return reader.read(), target_member.mtime
+            except KeyError:
+                # If exact path fails, try to find by name
+                target_file = full_path.split("/")[-1]  # Get just the filename
+                for member in tar.getmembers():
+                    if (
+                        member.name.endswith(target_file)
+                        and clean_path in member.name
+                        and (reader := tar.extractfile(member)) is not None
+                    ):
+                        return reader.read(), member.mtime
+
+    def _get_tarix_index(self, search_path: str) -> TarixRecord:
+        conn = connect_readonly(self.tarix_index)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT hash FROM tarindex WHERE path = ?", (search_path,))
+        result = cursor.fetchone()
+        conn.close()
+
+        if not result:
+            return None
+        return TarixRecord.from_string(result[0])
+
+
+class AppleExtractor(DashExtractor):
+    @classmethod
+    def is_format(cls, path: Path) -> bool:
+        resources = path / "Contents" / "Resources"
+        return (resources / "cache.db").exists()
+
+    def __init__(self, path: Path):
+        super().__init__(path)
+        resources = path / "Contents" / "Resources"
+        self.fs_dir = resources / "Documents" / "fs"
+        self.cache_db = resources / "cache.db"
+        # Cache for decompressed fs files
+        self.fs_cache: dict[int, bytes] = {}
+
+    def entry_as_markdown(self, name: str, doc_type: str, path: str, language: str):
+        if "request_key=" in path:
+            request_key: str = path.split("request_key=")[1].split("#")[0]
+            # Remove any language parameter from request_key
+            if "&" in request_key:
+                request_key = request_key.split("&")[0]
+
+            # If path contains language parameter, use that instead
+            path_language: str = language
+            if "&language=" in path:
+                path_language = path.split("&language=")[1].split("&")[0].split("#")[0]
+
+            doc = self._extract_by_request_key(request_key, path_language)
+
+            if doc:
+                markdown = self._format_as_markdown(doc, name, doc_type)
+                return markdown
 
     def _extract_by_request_key(
         self, request_key: str, language: str = "swift"
@@ -716,148 +889,19 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                 parts.append(f"`{title}`")
         return " ".join(parts)
 
-    def _extract_by_path(self, html_path: str) -> str:
-        """Extract HTML content from flat files."""
-        url = urlsplit(html_path)
-        assert url.netloc == ""
-        full_path = self.documents_path / Path(url.path)
-        if not full_path.resolve(strict=True).is_relative_to(self.documents_path):
-            raise ValueError(
-                f"Invalid path: {url.path!r} must be within docset Documents directory"
-            )
-        with full_path.open() as html_file:
-            html = html_file.read()
-            if url.fragment:
-                return extract_html_for_anchor(html_file.read(), url.fragment)
-            else:
-                return html
 
-    def _extract_from_tarix(self, search_path: str) -> str | None:
-        """Extract HTML content from tarix archive"""
-        # Remove anchor from path
-        clean_path = search_path.split("#")[0]
+EXTRACTORS: list[type[DashExtractor]] = [
+    AppleExtractor,
+    TarixExtractor,
+    FileSystemDirectoryExtractor,
+]
 
-        # Handle special Dash metadata paths (like in C docset)
-        if clean_path.startswith("<dash_entry_"):
-            # Extract the actual file path from the end of the path
-            # Format: <dash_entry_...>actual/file/path.html
-            parts = clean_path.split(">")
-            if len(parts) > 1:
-                clean_path = parts[-1]  # Get the actual file path after the last >
 
-        # Check cache first
-        if clean_path in self.html_cache:
-            return self.html_cache[clean_path]
-
-        try:
-            raw_file = self._extract_raw_from_tarix(search_path)[0]
-            if raw_file is not None:
-                content = raw_file.decode("utf-8", errors="ignore")
-                self.html_cache[clean_path] = content
-                return content
-
-        except FileNotFoundError:
-            pass
-
-        return None
-
-    def _extract_raw_from_tarix(self, search_path: str) -> tuple[bytes, int] | None:
-        # Remove anchor from path
-        clean_path = search_path.split("#")[0]
-
-        # Handle special Dash metadata paths (like in C docset)
-        if clean_path.startswith("<dash_entry_"):
-            # Extract the actual file path from the end of the path
-            # Format: <dash_entry_...>actual/file/path.html
-            parts = clean_path.split(">")
-            if len(parts) > 1:
-                clean_path = parts[-1]  # Get the actual file path after the last >
-
-        # Build full docset path
-        # Extract docset folder name from docset_path (e.g., "NodeJS/NodeJS.docset" -> "NodeJS.docset")
-        docset_folder = self._config["docset_path"].split("/")[-1]
-        full_path = f"{docset_folder}/Contents/Resources/Documents/{clean_path}"
-
-        if self.tarix_index.exists():
-            record = self._get_tarix_index(full_path)
-            if record:
-                return self._tarix_extract_by_index(record.offset, record.size)
-
-        return self._tarix_extract_as_tar(full_path, clean_path)
-
-    def _tarix_extract_by_index(self, offset: int, size: int) -> tuple[bytes, int]:
-        TAR_BLOCK_SIZE = 512
-        with open(self.tarix_archive, "rb") as compressed_file:
-            mm = mmap.mmap(
-                compressed_file.fileno(),
-                0,
-                access=mmap.ACCESS_READ,
-            )[offset : offset + size * TAR_BLOCK_SIZE]
-            decompressor = zlib.decompressobj(wbits=-zlib.MAX_WBITS)  # cspell:ignore wbits
-            decompressed_blocks = decompressor.decompress(mm)
-            with tarfile.open(mode="r:", fileobj=io.BytesIO(decompressed_blocks)) as tar:
-                member = tar.next()
-                return tar.extractfile(member).read(), member.mtime
-
-    def _tarix_extract_as_tar(self, full_path: str, clean_path: str) -> tuple[bytes, int] | None:
-        with tarfile.open(self.tarix_archive, "r:gz") as tar:
-            try:
-                target_member = tar.getmember(full_path)
-                if (reader := tar.extractfile(target_member)) is not None:
-                    return reader.read(), target_member.mtime
-            except KeyError:
-                # If exact path fails, try to find by name
-                target_file = full_path.split("/")[-1]  # Get just the filename
-                for member in tar.getmembers():
-                    if (
-                        member.name.endswith(target_file)
-                        and clean_path in member.name
-                        and (reader := tar.extractfile(member)) is not None
-                    ):
-                        return reader.read(), member.mtime
-
-    def _get_tarix_index(self, search_path: str) -> TarixRecord:
-        conn = connect_readonly(self.tarix_index)
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT hash FROM tarindex WHERE path = ?", (search_path,))
-        result = cursor.fetchone()
-        conn.close()
-
-        if not result:
-            return None
-        return TarixRecord.from_string(result[0])
-
-    def _format_html_as_markdown(
-        self, html_content: str, name: str, doc_type: str, path: str
-    ) -> str:
-        """Convert HTML documentation to Markdown"""
-        # fmt: off
-        lines: list[str] = [dedent(f"""\
-            ---
-            Title: {name}
-            Type: {doc_type}
-            Document-Source: {path}
-            ---
-            """)]
-        # fmt: on
-
-        lang = next(iter(self._config["languages"].keys()), "")
-        text_content = html_to_markdown.convert(
-            html_content,
-            html_to_markdown.ConversionOptions(
-                heading_style="atx", extract_metadata=False, code_language=lang
-            ),
-        ).content
-
-        # Limit content length
-        if len(text_content) > 2000:
-            text_content = text_content[:2000] + "..."
-
-        if text_content:
-            lines.append(text_content)
-
-        return "\n".join(lines)
+def construct(path: Path) -> DashExtractor:
+    for extractor_class in EXTRACTORS:
+        if extractor_class.is_format(path):
+            return extractor_class(path)
+    raise ValueError(f"No extractors matched ${path}")
 
 
 def extract_html_for_anchor(html: str, anchor: str):
@@ -887,7 +931,7 @@ def initialize_docsets(server_config: DocsetMCPConfig) -> dict[str, DashExtracto
     )
     docset_locations = (p for p in docset_locations if p.is_dir())
 
-    extractors = [DashExtractor(d) for d in docset_locations]
+    extractors = [construct(d) for d in docset_locations]
 
     return {e.id: e for e in extractors}
 
