@@ -1,0 +1,2 @@
+docSet.dsidx based on a bash docset in Zeal.
+Its searchIndex is a table with one `path` field that may contain an appended fragment.

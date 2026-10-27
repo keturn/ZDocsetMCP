@@ -176,12 +176,109 @@ class DashExtractor(metaclass=ABCMeta):
 
     def search(self, query: str, language: str | None = None, max_results: int = 3) -> str:
         """Search for Apple API documentation"""
-        # Search the optimized index
-        conn, cursor = self._search_index()
-
         # Filter by language using config
         if language not in self.languages:
             return f"Error: language must be one of {list(self._config['languages'].keys())}"
+
+        additional_members, db_results, exact_match_name, exact_match_type, found_exact_match = (
+            self._search_records(query, language, max_results)
+        )
+
+        if not db_results:
+            return f"No matches found for '{query}' in {language} documentation"
+
+        # Extract documentation for each result
+        results: list[str] = []
+        for row in db_results[:max_results]:
+            name, doc_type, path, *_ = row
+            if (markdown := self.entry_as_markdown(name, doc_type, path, language)) is not None:
+                # Add member note if this is the exact match and has members
+                if (
+                    found_exact_match
+                    and name == exact_match_name
+                    and doc_type == exact_match_type
+                    and additional_members > 0
+                ):
+                    type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', language='{language}', max_results=50)` to see all {exact_match_name} members."
+                    markdown += type_note
+                results.append(markdown)
+
+        # Handle different result counts appropriately
+        if results:
+            if len(results) == 1:
+                # Single result: return full content
+                return results[0]
+            elif 2 <= len(results) <= 5:
+                # 2-5 results: return summaries with option to search individually
+                summaries: list[str] = []
+                for i, full_content in enumerate(results, 1):
+                    lines = full_content.split("\n")
+                    # Get title and key info
+                    title = lines[0] if lines else f"Result {i}"
+                    summary_lines = [f"{i}. {title}"]
+
+                    # Add type and framework info
+                    for line in lines[1:10]:
+                        if line.startswith(("**Type:**", "**Framework:**")):
+                            summary_lines.append(f"   {line}")
+
+                    # Add first line of summary if available
+                    for j, line in enumerate(lines):
+                        if line == "## Summary" and j + 2 < len(lines):
+                            summary_text = lines[j + 2]
+                            if len(summary_text) > 100:
+                                summary_text = summary_text[:100] + "..."
+                            summary_lines.append(f"   {summary_text}")
+                            break
+
+                    summaries.append("\n".join(summary_lines))
+
+                header = f"Found {len(results)} results for '{query}':\n\n"
+                footer = "\n\nSearch for each item individually to see full documentation."
+                return header + "\n\n".join(summaries) + footer
+            elif len(results) <= 100:
+                # 6-100 results: return full content with separators
+                return "\n\n---\n\n".join(results)
+            else:
+                # More than 100: show count and suggest refinement
+                # In future, could implement pagination here
+                entry_list: list[str] = []
+                for full_content in results[:100]:
+                    lines = full_content.split("\n")
+                    title = lines[0].replace("# ", "") if lines else "Unknown"
+                    doc_type = "Unknown"
+                    framework = ""
+                    for line in lines[1:5]:
+                        if line.startswith("**Type:**"):
+                            doc_type = line.replace("**Type:** ", "")
+                        elif line.startswith("**Framework:**"):
+                            framework = f" - {line.replace('**Framework:** ', '')}"
+                    entry_list.append(f"- {title} ({doc_type}{framework})")
+
+                header = f"Found {len(results)} results for '{query}' (showing first 100):\n\n"
+                footer = f"\n\nToo many results ({len(results)}). Consider refining your search or using list_entries() with filters."
+                return header + "\n".join(entry_list) + footer
+
+        # No results extracted
+        if not db_results:
+            return f"No matches found for '{query}' in {language} documentation"
+
+        # Found entries but couldn't extract
+        entries_info: list[str] = []
+        for name, doc_type, *_ in db_results[:10]:  # Show up to 10 entries found
+            entries_info.append(f"- {name} ({doc_type})")
+
+        return f"""Found entries for '{query}' but couldn't extract documentation. The content may not be in the offline cache.
+
+Found but couldn't extract:
+{chr(10).join(entries_info)}
+
+Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downloaded."""
+
+    def _search_records(
+        self, query: str, language: str | None, max_results: int
+    ) -> tuple[int, list[tuple[str, str, str]], str | None, str | None, bool]:
+        conn, cursor = self._search_index()
 
         lang_config = self.languages[language]
         lang_filter = lang_config["filter"]
@@ -281,9 +378,9 @@ class DashExtractor(metaclass=ABCMeta):
                     SELECT COUNT(*)
                     FROM searchIndex
                     WHERE path LIKE ?
-                    AND path LIKE ?
-                    AND name != ?
-                """,
+                      AND path LIKE ?
+                      AND name != ?
+                    """,
                     (doc_path_pattern, f"%{lang_filter}%", exact_match_name),
                 )
                 total_count = cursor.fetchone()
@@ -334,97 +431,7 @@ class DashExtractor(metaclass=ABCMeta):
 
         # Use all_results instead of db_results
         db_results: list[tuple[str, str, str]] = all_results[:max_results]
-
-        if not db_results:
-            return f"No matches found for '{query}' in {language} documentation"
-
-        # Extract documentation for each result
-        results: list[str] = []
-        for row in db_results[:max_results]:
-            name, doc_type, path, *_ = row
-            if (markdown := self.entry_as_markdown(name, doc_type, path, language)) is not None:
-                # Add member note if this is the exact match and has members
-                if (
-                    found_exact_match
-                    and name == exact_match_name
-                    and doc_type == exact_match_type
-                    and additional_members > 0
-                ):
-                    type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', language='{language}', max_results=50)` to see all {exact_match_name} members."
-                    markdown += type_note
-                results.append(markdown)
-
-        # Handle different result counts appropriately
-        if results:
-            if len(results) == 1:
-                # Single result: return full content
-                return results[0]
-            elif 2 <= len(results) <= 5:
-                # 2-5 results: return summaries with option to search individually
-                summaries: list[str] = []
-                for i, full_content in enumerate(results, 1):
-                    lines = full_content.split("\n")
-                    # Get title and key info
-                    title = lines[0] if lines else f"Result {i}"
-                    summary_lines = [f"{i}. {title}"]
-
-                    # Add type and framework info
-                    for line in lines[1:10]:
-                        if line.startswith(("**Type:**", "**Framework:**")):
-                            summary_lines.append(f"   {line}")
-
-                    # Add first line of summary if available
-                    for j, line in enumerate(lines):
-                        if line == "## Summary" and j + 2 < len(lines):
-                            summary_text = lines[j + 2]
-                            if len(summary_text) > 100:
-                                summary_text = summary_text[:100] + "..."
-                            summary_lines.append(f"   {summary_text}")
-                            break
-
-                    summaries.append("\n".join(summary_lines))
-
-                header = f"Found {len(results)} results for '{query}':\n\n"
-                footer = "\n\nSearch for each item individually to see full documentation."
-                return header + "\n\n".join(summaries) + footer
-            elif len(results) <= 100:
-                # 6-100 results: return full content with separators
-                return "\n\n---\n\n".join(results)
-            else:
-                # More than 100: show count and suggest refinement
-                # In future, could implement pagination here
-                entry_list: list[str] = []
-                for full_content in results[:100]:
-                    lines = full_content.split("\n")
-                    title = lines[0].replace("# ", "") if lines else "Unknown"
-                    doc_type = "Unknown"
-                    framework = ""
-                    for line in lines[1:5]:
-                        if line.startswith("**Type:**"):
-                            doc_type = line.replace("**Type:** ", "")
-                        elif line.startswith("**Framework:**"):
-                            framework = f" - {line.replace('**Framework:** ', '')}"
-                    entry_list.append(f"- {title} ({doc_type}{framework})")
-
-                header = f"Found {len(results)} results for '{query}' (showing first 100):\n\n"
-                footer = f"\n\nToo many results ({len(results)}). Consider refining your search or using list_entries() with filters."
-                return header + "\n".join(entry_list) + footer
-
-        # No results extracted
-        if not db_results:
-            return f"No matches found for '{query}' in {language} documentation"
-
-        # Found entries but couldn't extract
-        entries_info: list[str] = []
-        for name, doc_type, *_ in db_results[:10]:  # Show up to 10 entries found
-            entries_info.append(f"- {name} ({doc_type})")
-
-        return f"""Found entries for '{query}' but couldn't extract documentation. The content may not be in the offline cache.
-
-Found but couldn't extract:
-{chr(10).join(entries_info)}
-
-Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downloaded."""
+        return additional_members, db_results, exact_match_name, exact_match_type, found_exact_match
 
     @abstractmethod
     def entry_as_markdown(self, name: str, doc_type: str, path: str, language) -> str | None: ...
