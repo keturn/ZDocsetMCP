@@ -24,7 +24,7 @@ import html_to_markdown
 
 from docsetmcp.common import AppleDocumentation, ContentItem, ProcessedDocsetConfig
 from docsetmcp.config_loader import ConfigLoader
-from docsetmcp.db_util import connect_readonly, escape_like_pattern, make_unique
+from docsetmcp.db_util import connect_readonly, escape_like_pattern, has_column, make_unique
 
 if typing.TYPE_CHECKING:
     from docsetmcp.server import DocsetMCPConfig
@@ -275,6 +275,13 @@ Found but couldn't extract:
 
 Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downloaded."""
 
+    def _search_index_cte(self, cursor: sqlite3.Cursor):
+        """Provide a consistent view of the path field as combined path#fragment."""
+        if has_column(cursor, "searchIndex", "fragment"):
+            return 'SELECT name, type, concat(searchIndex.path, "#", searchIndex.fragment) as path from searchIndex'
+        else:
+            return "SELECT name, type, path from searchIndex"
+
     def _search_records(
         self, query: str, language: str | None, max_results: int
     ) -> tuple[int, list[tuple[str, str, str]], str | None, str | None, bool]:
@@ -303,12 +310,16 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
         all_results: list[tuple[str, str, str]] = []
         seen_entries: set[tuple[str, str]] = set()  # Track (name, type) to avoid duplicates
 
+        # Normalize path and fragment fields
+        search_index_3 = self._search_index_cte(cursor)
+
         # Try exact match with all query variations (case-insensitive)
         for q in query_variations:
             cursor.execute(
                 f"""
+                WITH searchIndex3 AS ({search_index_3})
                 SELECT name, type, path
-                FROM searchIndex
+                FROM searchIndex3
                 WHERE name = ? COLLATE NOCASE AND path LIKE ?
                 ORDER BY {type_order}
                 LIMIT ?
@@ -328,8 +339,9 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
             for q in query_variations:
                 cursor.execute(
                     f"""
+                    WITH searchIndex3 AS ({search_index_3})
                     SELECT name, type, path
-                    FROM searchIndex
+                    FROM searchIndex3
                     WHERE name = ? COLLATE NOCASE
                     AND type IN ({type_list})
                     AND (path LIKE '%/documentation/%' OR path LIKE '%request_key=%')
@@ -374,9 +386,10 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
             if doc_path_pattern:
                 # Count total members for the note (but don't include them in results)
                 cursor.execute(
-                    """
+                    f"""
+                    WITH searchIndex3 AS ({search_index_3})
                     SELECT COUNT(*)
-                    FROM searchIndex
+                    FROM searchIndex3
                     WHERE path LIKE ?
                       AND path LIKE ?
                       AND name != ?
@@ -391,6 +404,7 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
         if len(all_results) < max_results:
             cursor.execute(
                 f"""
+                WITH searchIndex3 AS ({search_index_3})
                 SELECT name, type, path,
                     CASE
                         WHEN name = ? COLLATE NOCASE THEN 0
@@ -399,7 +413,7 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                         WHEN type IN ({type_list}) AND name LIKE ? COLLATE NOCASE THEN 3
                         ELSE 4
                     END as rank
-                FROM searchIndex
+                FROM searchIndex3
                 WHERE name LIKE ? ESCAPE char(0x1B) COLLATE NOCASE
                 AND (
                     (path LIKE ? AND path LIKE ?)  -- Has language filter
