@@ -1,0 +1,2 @@
+docSet.dsidx based on a Python 3 docset in Zeal.
+Its searchIndex is a view with separate `path` and `fragment` fields.

@@ -9,6 +9,7 @@ import re
 import sqlite3
 import tarfile
 import typing
+from abc import ABCMeta, abstractmethod
 from compression import zlib
 from dataclasses import dataclass
 from itertools import chain
@@ -23,7 +24,7 @@ import html_to_markdown
 
 from docsetmcp.common import AppleDocumentation, ContentItem, ProcessedDocsetConfig
 from docsetmcp.config_loader import ConfigLoader
-from docsetmcp.db_util import connect_readonly, escape_like_pattern, make_unique
+from docsetmcp.db_util import connect_readonly, escape_like_pattern, has_column, make_unique
 
 if typing.TYPE_CHECKING:
     from docsetmcp.server import DocsetMCPConfig
@@ -32,13 +33,18 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class DashExtractor:
+class DashExtractor(metaclass=ABCMeta):
     _config: ProcessedDocsetConfig
     path: Path
     identifiers: list[str]
     titles: list[str]
     description: str | None = None
     primary_language: str
+
+    @classmethod
+    @abstractmethod
+    def is_format(cls, path: Path) -> bool:
+        raise NotImplementedError()
 
     def __init__(self, path: Path):
         self.path: Path = path
@@ -84,19 +90,6 @@ class DashExtractor:
             self.search_index_db = resources / "optimizedIndex.dsidx"
         else:
             self.search_index_db = resources / "docSet.dsidx"
-
-        if self._config["format"] == "apple":
-            self.fs_dir = resources / "Documents" / "fs"
-            self.cache_db = resources / "cache.db"
-            # Cache for decompressed fs files
-            self.fs_cache: dict[int, bytes] = {}
-        elif (resources / "tarix.tgz").exists():
-            self.tarix_archive = resources / "tarix.tgz"
-            self.tarix_index = resources / "tarixIndex.db"
-            # Cache for extracted HTML content
-            self.html_cache: dict[str, str] = {}
-        else:
-            self.tarix_archive = None
 
     @property
     def id(self) -> str:
@@ -183,164 +176,13 @@ class DashExtractor:
 
     def search(self, query: str, language: str | None = None, max_results: int = 3) -> str:
         """Search for Apple API documentation"""
-        # Search the optimized index
-        conn, cursor = self._search_index()
-
         # Filter by language using config
         if language not in self.languages:
             return f"Error: language must be one of {list(self._config['languages'].keys())}"
 
-        lang_config = self.languages[language]
-        lang_filter = lang_config["filter"]
-
-        query_variations = self._normalize_query(query)
-
-        # Get dynamic type ordering
-        type_order = self._get_type_order_clause()
-
-        # Get top-level types from configuration
-        if self._config.get("types"):
-            # Sort types by their priority value and take the first few
-            sorted_types = sorted(self._config["types"].items(), key=lambda x: x[1])
-            top_types = [type_name for type_name, _ in sorted_types[:5]]
-        else:
-            # If no types configured, we can't filter by type
-            top_types = []
-
-        type_list = ", ".join(f"'{t}'" for t in top_types) if top_types else "''"
-
-        # Collect all results, not just from first successful query
-        all_results: list[tuple[str, str, str]] = []
-        seen_entries: set[tuple[str, str]] = set()  # Track (name, type) to avoid duplicates
-
-        # Try exact match with all query variations (case-insensitive)
-        for q in query_variations:
-            cursor.execute(
-                f"""
-                SELECT name, type, path
-                FROM searchIndex
-                WHERE name = ? COLLATE NOCASE AND path LIKE ?
-                ORDER BY {type_order}
-                LIMIT ?
-            """,
-                (q, f"%{lang_filter}%", max_results),
-            )
-            for row in cursor.fetchall():
-                key = (row[0], row[1])
-                if key not in seen_entries:
-                    all_results.append(row)
-                    seen_entries.add(key)
-            if len(all_results) >= max_results:
-                break
-
-        # If we need more results, try framework-level entries without language filter
-        if len(all_results) < max_results:
-            for q in query_variations:
-                cursor.execute(
-                    f"""
-                    SELECT name, type, path
-                    FROM searchIndex
-                    WHERE name = ? COLLATE NOCASE
-                    AND type IN ({type_list})
-                    AND (path LIKE '%/documentation/%' OR path LIKE '%request_key=%')
-                    ORDER BY {type_order}
-                    LIMIT ?
-                """,
-                    (q, max_results - len(all_results)),
-                )
-                for row in cursor.fetchall():
-                    key = (row[0], row[1])
-                    if key not in seen_entries:
-                        all_results.append(row)
-                        seen_entries.add(key)
-                if len(all_results) >= max_results:
-                    break
-
-        # Check if we found an exact match in the results
-        found_exact_match: bool = False
-        exact_match_name: str | None = None
-        exact_match_path: str | None = None
-        exact_match_type: str | None = None
-
-        for row in all_results:
-            if len(row) >= 3 and row[0].lower() == query.lower():
-                found_exact_match = True
-                exact_match_name = row[0]
-                exact_match_type = row[1]
-                exact_match_path = row[2]
-                break
-
-        # Track additional members count
-        additional_members = 0
-
-        # Count total members for exact matches to show in the note
-        if found_exact_match and exact_match_name and exact_match_path:
-            # Extract the documentation path pattern
-            doc_path_pattern = ""
-            if "/documentation/" in exact_match_path:
-                doc_path = exact_match_path.split("/documentation/")[1].split("?")[0].split("#")[0]
-                doc_path_pattern = f"%/documentation/{doc_path}/%"
-
-            if doc_path_pattern:
-                # Count total members for the note (but don't include them in results)
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM searchIndex
-                    WHERE path LIKE ?
-                    AND path LIKE ?
-                    AND name != ?
-                """,
-                    (doc_path_pattern, f"%{lang_filter}%", exact_match_name),
-                )
-                total_count = cursor.fetchone()
-                if total_count:
-                    additional_members = total_count[0]
-
-        # If we still need more results, try broader search
-        if len(all_results) < max_results:
-            cursor.execute(
-                f"""
-                SELECT name, type, path,
-                    CASE
-                        WHEN name = ? COLLATE NOCASE THEN 0
-                        WHEN type IN ({type_list}) AND name = ? COLLATE NOCASE THEN 1
-                        WHEN name LIKE ? COLLATE NOCASE THEN 2
-                        WHEN type IN ({type_list}) AND name LIKE ? COLLATE NOCASE THEN 3
-                        ELSE 4
-                    END as rank
-                FROM searchIndex
-                WHERE name LIKE ? ESCAPE char(0x1B) COLLATE NOCASE
-                AND (
-                    (path LIKE ? AND path LIKE ?)  -- Has language filter
-                    OR (type IN ({type_list}) AND (path LIKE '%/documentation/%' OR path LIKE '%request_key=%'))  -- Or is framework without language
-                )
-                ORDER BY rank, {type_order}, LENGTH(name)
-                LIMIT ?
-            """,
-                (
-                    query,
-                    query,
-                    f"{query}%",
-                    f"{query}%",
-                    f"%{escape_like_pattern(query)}%",
-                    f"%{lang_filter}%",
-                    f"%{lang_filter}%",
-                    max_results * 2,
-                ),
-            )
-            for row in cursor.fetchall():
-                if len(all_results) >= max_results:
-                    break
-                key = (row[0], row[1])
-                if key not in seen_entries:
-                    all_results.append(row)
-                    seen_entries.add(key)
-
-        conn.close()
-
-        # Use all_results instead of db_results
-        db_results: list[tuple[str, str, str]] = all_results[:max_results]
+        additional_members, db_results, exact_match_name, exact_match_type, found_exact_match = (
+            self._search_records(query, language, max_results)
+        )
 
         if not db_results:
             return f"No matches found for '{query}' in {language} documentation"
@@ -349,54 +191,17 @@ class DashExtractor:
         results: list[str] = []
         for row in db_results[:max_results]:
             name, doc_type, path, *_ = row
-            if self._config["format"] == "apple":
-                if "request_key=" in path:
-                    request_key: str = path.split("request_key=")[1].split("#")[0]
-                    # Remove any language parameter from request_key
-                    if "&" in request_key:
-                        request_key = request_key.split("&")[0]
-
-                    # If path contains language parameter, use that instead
-                    path_language: str = language
-                    if "&language=" in path:
-                        path_language = path.split("&language=")[1].split("&")[0].split("#")[0]
-
-                    doc = self._extract_by_request_key(request_key, path_language)
-
-                    if doc:
-                        markdown = self._format_as_markdown(doc, name, doc_type)
-
-                        # Add member note if this is the exact match and has members
-                        if (
-                            found_exact_match
-                            and name == exact_match_name
-                            and doc_type == exact_match_type
-                            and additional_members > 0
-                        ):
-                            type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', language='{language}', max_results=50)` to see all {exact_match_name} members."
-                            markdown += type_note
-
-                        results.append(markdown)
-            else:
-                if self.tarix_archive:
-                    html_content = self._extract_from_tarix(path)
-                else:
-                    html_content = self._extract_by_path(path)
-
-                if html_content:
-                    markdown = self._format_html_as_markdown(html_content, name, doc_type, path)
-
-                    # Add member note if this is the exact match and has members
-                    if (
-                        found_exact_match
-                        and name == exact_match_name
-                        and doc_type == exact_match_type
-                        and additional_members > 0
-                    ):
-                        type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', language='{language}', max_results=50)` to see all {exact_match_name} members."
-                        markdown += type_note
-
-                    results.append(markdown)
+            if (markdown := self.entry_as_markdown(name, doc_type, path, language)) is not None:
+                # Add member note if this is the exact match and has members
+                if (
+                    found_exact_match
+                    and name == exact_match_name
+                    and doc_type == exact_match_type
+                    and additional_members > 0
+                ):
+                    type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', language='{language}', max_results=50)` to see all {exact_match_name} members."
+                    markdown += type_note
+                results.append(markdown)
 
         # Handle different result counts appropriately
         if results:
@@ -470,6 +275,181 @@ Found but couldn't extract:
 
 Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downloaded."""
 
+    def _search_index_cte(self, cursor: sqlite3.Cursor):
+        """Provide a consistent view of the path field as combined path#fragment."""
+        if has_column(cursor, "searchIndex", "fragment"):
+            return 'SELECT name, type, concat(searchIndex.path, "#", searchIndex.fragment) as path from searchIndex'
+        else:
+            return "SELECT name, type, path from searchIndex"
+
+    def _search_records(
+        self, query: str, language: str | None, max_results: int
+    ) -> tuple[int, list[tuple[str, str, str]], str | None, str | None, bool]:
+        conn, cursor = self._search_index()
+
+        lang_config = self.languages[language]
+        lang_filter = lang_config["filter"]
+
+        query_variations = self._normalize_query(query)
+
+        # Get dynamic type ordering
+        type_order = self._get_type_order_clause()
+
+        # Get top-level types from configuration
+        if self._config.get("types"):
+            # Sort types by their priority value and take the first few
+            sorted_types = sorted(self._config["types"].items(), key=lambda x: x[1])
+            top_types = [type_name for type_name, _ in sorted_types[:5]]
+        else:
+            # If no types configured, we can't filter by type
+            top_types = []
+
+        type_list = ", ".join(f"'{t}'" for t in top_types) if top_types else "''"
+
+        # Collect all results, not just from first successful query
+        all_results: list[tuple[str, str, str]] = []
+        seen_entries: set[tuple[str, str]] = set()  # Track (name, type) to avoid duplicates
+
+        # Normalize path and fragment fields
+        search_index_3 = self._search_index_cte(cursor)
+
+        # Try exact match with all query variations (case-insensitive)
+        for q in query_variations:
+            cursor.execute(
+                f"""
+                WITH searchIndex3 AS ({search_index_3})
+                SELECT name, type, path
+                FROM searchIndex3
+                WHERE name = ? COLLATE NOCASE AND path LIKE ?
+                ORDER BY {type_order}
+                LIMIT ?
+            """,
+                (q, f"%{lang_filter}%", max_results),
+            )
+            for row in cursor.fetchall():
+                key = (row[0], row[1])
+                if key not in seen_entries:
+                    all_results.append(row)
+                    seen_entries.add(key)
+            if len(all_results) >= max_results:
+                break
+
+        # If we need more results, try framework-level entries without language filter
+        if len(all_results) < max_results:
+            for q in query_variations:
+                cursor.execute(
+                    f"""
+                    WITH searchIndex3 AS ({search_index_3})
+                    SELECT name, type, path
+                    FROM searchIndex3
+                    WHERE name = ? COLLATE NOCASE
+                    AND type IN ({type_list})
+                    AND (path LIKE '%/documentation/%' OR path LIKE '%request_key=%')
+                    ORDER BY {type_order}
+                    LIMIT ?
+                """,
+                    (q, max_results - len(all_results)),
+                )
+                for row in cursor.fetchall():
+                    key = (row[0], row[1])
+                    if key not in seen_entries:
+                        all_results.append(row)
+                        seen_entries.add(key)
+                if len(all_results) >= max_results:
+                    break
+
+        # Check if we found an exact match in the results
+        found_exact_match: bool = False
+        exact_match_name: str | None = None
+        exact_match_path: str | None = None
+        exact_match_type: str | None = None
+
+        for row in all_results:
+            if len(row) >= 3 and row[0].lower() == query.lower():
+                found_exact_match = True
+                exact_match_name = row[0]
+                exact_match_type = row[1]
+                exact_match_path = row[2]
+                break
+
+        # Track additional members count
+        additional_members = 0
+
+        # Count total members for exact matches to show in the note
+        if found_exact_match and exact_match_name and exact_match_path:
+            # Extract the documentation path pattern
+            doc_path_pattern = ""
+            if "/documentation/" in exact_match_path:
+                doc_path = exact_match_path.split("/documentation/")[1].split("?")[0].split("#")[0]
+                doc_path_pattern = f"%/documentation/{doc_path}/%"
+
+            if doc_path_pattern:
+                # Count total members for the note (but don't include them in results)
+                cursor.execute(
+                    f"""
+                    WITH searchIndex3 AS ({search_index_3})
+                    SELECT COUNT(*)
+                    FROM searchIndex3
+                    WHERE path LIKE ?
+                      AND path LIKE ?
+                      AND name != ?
+                    """,
+                    (doc_path_pattern, f"%{lang_filter}%", exact_match_name),
+                )
+                total_count = cursor.fetchone()
+                if total_count:
+                    additional_members = total_count[0]
+
+        # If we still need more results, try broader search
+        if len(all_results) < max_results:
+            cursor.execute(
+                f"""
+                WITH searchIndex3 AS ({search_index_3})
+                SELECT name, type, path,
+                    CASE
+                        WHEN name = ? COLLATE NOCASE THEN 0
+                        WHEN type IN ({type_list}) AND name = ? COLLATE NOCASE THEN 1
+                        WHEN name LIKE ? COLLATE NOCASE THEN 2
+                        WHEN type IN ({type_list}) AND name LIKE ? COLLATE NOCASE THEN 3
+                        ELSE 4
+                    END as rank
+                FROM searchIndex3
+                WHERE name LIKE ? ESCAPE char(0x1B) COLLATE NOCASE
+                AND (
+                    (path LIKE ? AND path LIKE ?)  -- Has language filter
+                    OR (type IN ({type_list}) AND (path LIKE '%/documentation/%' OR path LIKE '%request_key=%'))  -- Or is framework without language
+                )
+                ORDER BY rank, {type_order}, LENGTH(name)
+                LIMIT ?
+            """,
+                (
+                    query,
+                    query,
+                    f"{query}%",
+                    f"{query}%",
+                    f"%{escape_like_pattern(query)}%",
+                    f"%{lang_filter}%",
+                    f"%{lang_filter}%",
+                    max_results * 2,
+                ),
+            )
+            for row in cursor.fetchall():
+                if len(all_results) >= max_results:
+                    break
+                key = (row[0], row[1])
+                if key not in seen_entries:
+                    all_results.append(row)
+                    seen_entries.add(key)
+
+        conn.close()
+
+        # Use all_results instead of db_results
+        db_results: list[tuple[str, str, str]] = all_results[:max_results]
+        return additional_members, db_results, exact_match_name, exact_match_type, found_exact_match
+
+    @abstractmethod
+    def entry_as_markdown(self, name: str, doc_type: str, path: str, language) -> str | None: ...
+
     def list_frameworks(self, filter_text: str | None = None) -> str:
         """List available frameworks/modules"""
         conn, cursor = self._search_index()
@@ -536,6 +516,224 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
             return f"Available {label} ({len(frameworks)} total):\n" + "\n".join(
                 f"- {f}" for f in frameworks
             )
+
+    def _format_html_as_markdown(
+        self, html_content: str, name: str, doc_type: str, path: str
+    ) -> str:
+        """Convert HTML documentation to Markdown"""
+        # fmt: off
+        lines: list[str] = [dedent(f"""\
+            ---
+            Title: {name}
+            Type: {doc_type}
+            Document-Source: {path}
+            ---
+            """)]
+        # fmt: on
+
+        lang = next(iter(self._config["languages"].keys()), "")
+        text_content = html_to_markdown.convert(
+            html_content,
+            html_to_markdown.ConversionOptions(
+                heading_style="atx", extract_metadata=False, code_language=lang
+            ),
+        ).content
+
+        # Limit content length
+        if len(text_content) > 2000:
+            text_content = text_content[:2000] + "..."
+
+        if text_content:
+            lines.append(text_content)
+
+        return "\n".join(lines)
+
+
+class FileSystemDirectoryExtractor(DashExtractor):
+    @classmethod
+    def is_format(cls, path: Path) -> bool:
+        resources = path / "Contents" / "Resources"
+        return (resources / "Documents").exists()
+
+    def entry_as_markdown(self, name: str, doc_type: str, path: str, language: str) -> str | None:
+        html_content = self._extract_by_path(path)
+
+        if not html_content:
+            return None
+
+        if "#" in path:
+            anchor = path.split("#", 1)[-1]
+            html_content = extract_html_for_anchor(html_content, anchor)
+
+        return self._format_html_as_markdown(html_content, name, doc_type, path)
+
+    def _extract_by_path(self, html_path: str) -> str:
+        """Extract HTML content from flat files."""
+        url = urlsplit(html_path)
+        assert url.netloc == ""
+        full_path = self.documents_path / Path(url.path)
+        if not full_path.resolve(strict=True).is_relative_to(self.documents_path):
+            raise ValueError(
+                f"Invalid path: {url.path!r} must be within docset Documents directory"
+            )
+        with full_path.open() as html_file:
+            return html_file.read()
+
+
+class TarixExtractor(DashExtractor):
+    @classmethod
+    def is_format(cls, path: Path) -> bool:
+        resources = path / "Contents" / "Resources"
+        return (resources / "tarix.tgz").exists()
+
+    def __init__(self, path: Path):
+        super().__init__(path)
+        resources = path / "Contents" / "Resources"
+        self.tarix_archive = resources / "tarix.tgz"
+        self.tarix_index = resources / "tarixIndex.db"
+        # Cache for extracted HTML content
+        self.html_cache: dict[str, str] = {}
+
+    def entry_as_markdown(self, name: str, doc_type: str, path: str, language: str) -> str | None:
+        html_content = self._extract_from_tarix(path)
+
+        if not html_content:
+            return None
+
+        if "#" in path:
+            anchor = path.split("#", 1)[-1]
+            html_content = extract_html_for_anchor(html_content, anchor)
+
+        return self._format_html_as_markdown(html_content, name, doc_type, path)
+
+    def _extract_from_tarix(self, search_path: str) -> str | None:
+        """Extract HTML content from tarix archive"""
+        # Remove anchor from path
+        clean_path = search_path.split("#")[0]
+
+        # Handle special Dash metadata paths (like in C docset)
+        if clean_path.startswith("<dash_entry_"):
+            # Extract the actual file path from the end of the path
+            # Format: <dash_entry_...>actual/file/path.html
+            parts = clean_path.split(">")
+            if len(parts) > 1:
+                clean_path = parts[-1]  # Get the actual file path after the last >
+
+        # Check cache first
+        if clean_path in self.html_cache:
+            return self.html_cache[clean_path]
+
+        try:
+            raw_file = self._extract_raw_from_tarix(search_path)[0]
+            if raw_file is not None:
+                content = raw_file.decode("utf-8", errors="ignore")
+                self.html_cache[clean_path] = content
+                return content
+
+        except FileNotFoundError:
+            pass
+
+        return None
+
+    def _extract_raw_from_tarix(self, search_path: str) -> tuple[bytes, int] | None:
+        # Remove anchor from path
+        clean_path = search_path.split("#")[0]
+
+        # Handle special Dash metadata paths (like in C docset)
+        if clean_path.startswith("<dash_entry_"):
+            # Extract the actual file path from the end of the path
+            # Format: <dash_entry_...>actual/file/path.html
+            parts = clean_path.split(">")
+            if len(parts) > 1:
+                clean_path = parts[-1]  # Get the actual file path after the last >
+
+        # Build full docset path
+        # Extract docset folder name from docset_path (e.g., "NodeJS/NodeJS.docset" -> "NodeJS.docset")
+        docset_folder = self._config["docset_path"].split("/")[-1]
+        full_path = f"{docset_folder}/Contents/Resources/Documents/{clean_path}"
+
+        if self.tarix_index.exists():
+            record = self._get_tarix_index(full_path)
+            if record:
+                return self._tarix_extract_by_index(record.offset, record.size)
+
+        return self._tarix_extract_as_tar(full_path, clean_path)
+
+    def _tarix_extract_by_index(self, offset: int, size: int) -> tuple[bytes, int]:
+        TAR_BLOCK_SIZE = 512
+        with open(self.tarix_archive, "rb") as compressed_file:
+            mm = mmap.mmap(
+                compressed_file.fileno(),
+                0,
+                access=mmap.ACCESS_READ,
+            )[offset : offset + size * TAR_BLOCK_SIZE]
+            decompressor = zlib.decompressobj(wbits=-zlib.MAX_WBITS)  # cspell:ignore wbits
+            decompressed_blocks = decompressor.decompress(mm)
+            with tarfile.open(mode="r:", fileobj=io.BytesIO(decompressed_blocks)) as tar:
+                member = tar.next()
+                return tar.extractfile(member).read(), member.mtime
+
+    def _tarix_extract_as_tar(self, full_path: str, clean_path: str) -> tuple[bytes, int] | None:
+        with tarfile.open(self.tarix_archive, "r:gz") as tar:
+            try:
+                target_member = tar.getmember(full_path)
+                if (reader := tar.extractfile(target_member)) is not None:
+                    return reader.read(), target_member.mtime
+            except KeyError:
+                # If exact path fails, try to find by name
+                target_file = full_path.split("/")[-1]  # Get just the filename
+                for member in tar.getmembers():
+                    if (
+                        member.name.endswith(target_file)
+                        and clean_path in member.name
+                        and (reader := tar.extractfile(member)) is not None
+                    ):
+                        return reader.read(), member.mtime
+
+    def _get_tarix_index(self, search_path: str) -> TarixRecord:
+        conn = connect_readonly(self.tarix_index)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT hash FROM tarindex WHERE path = ?", (search_path,))
+        result = cursor.fetchone()
+        conn.close()
+
+        if not result:
+            return None
+        return TarixRecord.from_string(result[0])
+
+
+class AppleExtractor(DashExtractor):
+    @classmethod
+    def is_format(cls, path: Path) -> bool:
+        resources = path / "Contents" / "Resources"
+        return (resources / "cache.db").exists()
+
+    def __init__(self, path: Path):
+        super().__init__(path)
+        resources = path / "Contents" / "Resources"
+        self.fs_dir = resources / "Documents" / "fs"
+        self.cache_db = resources / "cache.db"
+        # Cache for decompressed fs files
+        self.fs_cache: dict[int, bytes] = {}
+
+    def entry_as_markdown(self, name: str, doc_type: str, path: str, language: str):
+        if "request_key=" in path:
+            request_key: str = path.split("request_key=")[1].split("#")[0]
+            # Remove any language parameter from request_key
+            if "&" in request_key:
+                request_key = request_key.split("&")[0]
+
+            # If path contains language parameter, use that instead
+            path_language: str = language
+            if "&language=" in path:
+                path_language = path.split("&language=")[1].split("&")[0].split("#")[0]
+
+            doc = self._extract_by_request_key(request_key, path_language)
+
+            if doc:
+                markdown = self._format_as_markdown(doc, name, doc_type)
+                return markdown
 
     def _extract_by_request_key(
         self, request_key: str, language: str = "swift"
@@ -716,154 +914,29 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                 parts.append(f"`{title}`")
         return " ".join(parts)
 
-    def _extract_by_path(self, html_path: str) -> str:
-        """Extract HTML content from flat files."""
-        url = urlsplit(html_path)
-        assert url.netloc == ""
-        full_path = self.documents_path / Path(url.path)
-        if not full_path.resolve(strict=True).is_relative_to(self.documents_path):
-            raise ValueError(
-                f"Invalid path: {url.path!r} must be within docset Documents directory"
-            )
-        with full_path.open() as html_file:
-            soup: bs4.Tag = bs4.BeautifulSoup(html_file)
 
-        if url.fragment and (
-            target := (soup.find(id=url.fragment) or soup.find("a", attrs={"name": url.fragment}))
-        ):
-            # The target is typically an anchor or a heading. Move up to its container element for relevant context.
-            # wtf pycharm. https://youtrack.jetbrains.com/issue/PY-88479
-            # noinspection PyUnboundLocalVariable
-            soup = target.parent or target
+EXTRACTORS: list[type[DashExtractor]] = [
+    AppleExtractor,
+    TarixExtractor,
+    FileSystemDirectoryExtractor,
+]
 
-        return soup.decode()
 
-    def _extract_from_tarix(self, search_path: str) -> str | None:
-        """Extract HTML content from tarix archive"""
-        # Remove anchor from path
-        clean_path = search_path.split("#")[0]
+def construct(path: Path) -> DashExtractor:
+    for extractor_class in EXTRACTORS:
+        if extractor_class.is_format(path):
+            return extractor_class(path)
+    raise ValueError(f"No extractors matched ${path}")
 
-        # Handle special Dash metadata paths (like in C docset)
-        if clean_path.startswith("<dash_entry_"):
-            # Extract the actual file path from the end of the path
-            # Format: <dash_entry_...>actual/file/path.html
-            parts = clean_path.split(">")
-            if len(parts) > 1:
-                clean_path = parts[-1]  # Get the actual file path after the last >
 
-        # Check cache first
-        if clean_path in self.html_cache:
-            return self.html_cache[clean_path]
+def extract_html_for_anchor(html: str, anchor: str):
+    soup: bs4.Tag = bs4.BeautifulSoup(html)
 
-        try:
-            raw_file = self._extract_raw_from_tarix(search_path)[0]
-            if raw_file is not None:
-                content = raw_file.decode("utf-8", errors="ignore")
-                self.html_cache[clean_path] = content
-                return content
+    if target := (soup.find(id=anchor) or soup.find("a", attrs={"name": anchor})):
+        # The target is typically an anchor or a heading. Move up to its container element for relevant context.
+        soup = target.parent or target
 
-        except FileNotFoundError:
-            pass
-
-        return None
-
-    def _extract_raw_from_tarix(self, search_path: str) -> tuple[bytes, int] | None:
-        # Remove anchor from path
-        clean_path = search_path.split("#")[0]
-
-        # Handle special Dash metadata paths (like in C docset)
-        if clean_path.startswith("<dash_entry_"):
-            # Extract the actual file path from the end of the path
-            # Format: <dash_entry_...>actual/file/path.html
-            parts = clean_path.split(">")
-            if len(parts) > 1:
-                clean_path = parts[-1]  # Get the actual file path after the last >
-
-        # Build full docset path
-        # Extract docset folder name from docset_path (e.g., "NodeJS/NodeJS.docset" -> "NodeJS.docset")
-        docset_folder = self._config["docset_path"].split("/")[-1]
-        full_path = f"{docset_folder}/Contents/Resources/Documents/{clean_path}"
-
-        if self.tarix_index.exists():
-            record = self._get_tarix_index(full_path)
-            if record:
-                return self._tarix_extract_by_index(record.offset, record.size)
-
-        return self._tarix_extract_as_tar(full_path, clean_path)
-
-    def _tarix_extract_by_index(self, offset: int, size: int) -> tuple[bytes, int]:
-        TAR_BLOCK_SIZE = 512
-        with open(self.tarix_archive, "rb") as compressed_file:
-            mm = mmap.mmap(
-                compressed_file.fileno(),
-                0,
-                access=mmap.ACCESS_READ,
-            )[offset : offset + size * TAR_BLOCK_SIZE]
-            decompressor = zlib.decompressobj(wbits=-zlib.MAX_WBITS)  # cspell:ignore wbits
-            decompressed_blocks = decompressor.decompress(mm)
-            with tarfile.open(mode="r:", fileobj=io.BytesIO(decompressed_blocks)) as tar:
-                member = tar.next()
-                return tar.extractfile(member).read(), member.mtime
-
-    def _tarix_extract_as_tar(self, full_path: str, clean_path: str) -> tuple[bytes, int] | None:
-        with tarfile.open(self.tarix_archive, "r:gz") as tar:
-            try:
-                target_member = tar.getmember(full_path)
-                if (reader := tar.extractfile(target_member)) is not None:
-                    return reader.read(), target_member.mtime
-            except KeyError:
-                # If exact path fails, try to find by name
-                target_file = full_path.split("/")[-1]  # Get just the filename
-                for member in tar.getmembers():
-                    if (
-                        member.name.endswith(target_file)
-                        and clean_path in member.name
-                        and (reader := tar.extractfile(member)) is not None
-                    ):
-                        return reader.read(), member.mtime
-
-    def _get_tarix_index(self, search_path: str) -> TarixRecord:
-        conn = connect_readonly(self.tarix_index)
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT hash FROM tarindex WHERE path = ?", (search_path,))
-        result = cursor.fetchone()
-        conn.close()
-
-        if not result:
-            return None
-        return TarixRecord.from_string(result[0])
-
-    def _format_html_as_markdown(
-        self, html_content: str, name: str, doc_type: str, path: str
-    ) -> str:
-        """Convert HTML documentation to Markdown"""
-        # fmt: off
-        lines: list[str] = [dedent(f"""\
-            ---
-            Title: {name}
-            Type: {doc_type}
-            Document-Source: {path}
-            ---
-            """)]
-        # fmt: on
-
-        lang = next(iter(self._config["languages"].keys()), "")
-        text_content = html_to_markdown.convert(
-            html_content,
-            html_to_markdown.ConversionOptions(
-                heading_style="atx", extract_metadata=False, code_language=lang
-            ),
-        ).content
-
-        # Limit content length
-        if len(text_content) > 2000:
-            text_content = text_content[:2000] + "..."
-
-        if text_content:
-            lines.append(text_content)
-
-        return "\n".join(lines)
+    return soup.decode()
 
 
 def infer_primary_language(config: ProcessedDocsetConfig) -> str:
@@ -883,7 +956,7 @@ def initialize_docsets(server_config: DocsetMCPConfig) -> dict[str, DashExtracto
     )
     docset_locations = (p for p in docset_locations if p.is_dir())
 
-    extractors = [DashExtractor(d) for d in docset_locations]
+    extractors = [construct(d) for d in docset_locations]
 
     return {e.id: e for e in extractors}
 
