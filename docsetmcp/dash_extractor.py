@@ -561,6 +561,10 @@ class FileSystemDirectoryExtractor(DashExtractor):
         if not html_content:
             return None
 
+        if "#" in path:
+            anchor = path.split("#", 1)[-1]
+            html_content = extract_html_for_anchor(html_content, anchor)
+
         return self._format_html_as_markdown(html_content, name, doc_type, path)
 
     def _extract_by_path(self, html_path: str) -> str:
@@ -573,11 +577,7 @@ class FileSystemDirectoryExtractor(DashExtractor):
                 f"Invalid path: {url.path!r} must be within docset Documents directory"
             )
         with full_path.open() as html_file:
-            html = html_file.read()
-            if url.fragment:
-                return extract_html_for_anchor(html_file.read(), url.fragment)
-            else:
-                return html
+            return html_file.read()
 
 
 class TarixExtractor(DashExtractor):
@@ -599,6 +599,10 @@ class TarixExtractor(DashExtractor):
 
         if not html_content:
             return None
+
+        if "#" in path:
+            anchor = path.split("#", 1)[-1]
+            html_content = extract_html_for_anchor(html_content, anchor)
 
         return self._format_html_as_markdown(html_content, name, doc_type, path)
 
