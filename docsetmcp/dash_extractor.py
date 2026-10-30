@@ -15,12 +15,12 @@ from dataclasses import dataclass
 from itertools import chain
 from pathlib import Path
 from plistlib import InvalidFileException
-from textwrap import dedent
 from urllib.parse import urlsplit
 
 import brotli
 import bs4
 import html_to_markdown
+import yaml
 
 from docsetmcp.common import AppleDocumentation, ContentItem, ProcessedDocsetConfig
 from docsetmcp.config_loader import ConfigLoader
@@ -465,15 +465,14 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
         self, html_content: str, name: str, doc_type: str, path: str
     ) -> str:
         """Convert HTML documentation to Markdown"""
-        # fmt: off
-        lines: list[str] = [dedent(f"""\
-            ---
-            Title: {name}
-            Type: {doc_type}
-            Document-Source: {path}
-            ---
-            """)]
-        # fmt: on
+        lines: list[str] = [
+            yaml.dump(
+                {"Title": name, "Type": doc_type, "Document-Source": path},
+                explicit_start=True,
+                sort_keys=False,
+            )
+            + "---\n",
+        ]
 
         lang = next(iter(self._config["languages"].keys()), "")
         text_content = html_to_markdown.convert(
@@ -502,8 +501,14 @@ def _format_search_results(query: str, results: list[str]) -> str:
         summaries: list[str] = []
         for i, full_content in enumerate(results, 1):
             lines = full_content.split("\n")
+            title = f"Result {i}"
             # Get title and key info
-            title = lines[0] if lines else f"Result {i}"
+            if lines[0] == "---":
+                front_matter = next(yaml.safe_load_all(full_content))
+                if "Title" in front_matter:
+                    title = front_matter["Title"]
+            else:
+                title = lines[0]
             summary_lines = [f"{i}. {title}"]
 
             # Add type and framework info
