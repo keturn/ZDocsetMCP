@@ -4,9 +4,12 @@ from pathlib import Path
 
 def connect_readonly(db_path: Path) -> sqlite3.Connection:
     # immutable is necessary to convince it to open a WAL-mode database in a read-only mount, otherwise
-    # sqlite fails with "unable to open database file (14)" See https://sqlite.org/wal.html#read_only_databases
+    # SQLite fails with "unable to open database file (14)" See https://sqlite.org/wal.html#read_only_databases
     uri = db_path.absolute().as_uri() + "?mode=ro&immutable=1"
     conn = sqlite3.connect(uri, uri=True, autocommit=False)
+    # https://www.sqlite.org/security.html
+    conn.setconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE, True)
+    conn.setconfig(sqlite3.SQLITE_DBCONFIG_TRUSTED_SCHEMA, False)
     return conn
 
 
