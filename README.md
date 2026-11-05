@@ -136,12 +136,7 @@ DocsetMCP will automatically discover and configure docsets found in these addit
 
 ### MCP Client Setup
 
-Choose your MCP client below for specific setup instructions:
-
-<details>
-<summary><b>🤖 Claude Desktop</b></summary>
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Add to your MCP configuration:
 
 ```json
 {
@@ -153,58 +148,6 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   }
 }
 ```
-
-**For custom docset locations:**
-
-```json
-{
-  "mcpServers": {
-    "docsetmcp": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/keturn/ZDocsetMCP", "docsetmcp"],
-      "env": {
-        "DOCSET_PATH": "/path/to/your/docsets",
-        "CHEATSHEET_PATH": "/path/to/your/cheatsheets"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>⌨️ Claude Code CLI</b></summary>
-
-```bash
-# For current project
-claude mcp add zdocsetmcp "uvx --from git+https://github.com/keturn/ZDocsetMCP docsetmcp"
-
-# For all projects
-claude mcp add --scope user zdocsetmcp "uvx --from git+https://github.com/keturn/ZDocsetMCP docsetmcp"
-```
-
-</details>
-
-<details>
-<summary><b>📝 Cursor, VS Code, Windsurf and other MCP-compatible clients</b></summary>
-
-Add to your MCP configuration (Cursor: `.mcp/mcp.json` in your project root:
-
-```json
-{
-  "mcpServers": {
-    "docsetmcp": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/keturn/ZDocsetMCP", "docsetmcp"]
-    }
-  }
-}
-```
-
-**Note**: Restart your client and check your MCP settings for connection status.
-
-</details>
 
 ## Installation
 
@@ -225,16 +168,6 @@ Then use `docsetmcp` instead of `uvx docsetmcp` in your configuration.
 ## Usage Examples
 
 Once configured, you can ask your AI assistant to search documentation naturally:
-
-### 🍎 iOS/macOS Development
-
-```text
-"Search for URLSession documentation"
-"Show me how to use AppIntent in SwiftUI"
-"Find CarPlay framework documentation"  # Returns framework + related entries with drilldown notes
-"Search for CPListTemplate class"       # Returns specific CarPlay class
-"Find NSPredicate examples"
-```
 
 ### 🌐 Web Development
 
@@ -263,9 +196,6 @@ Once configured, you can ask your AI assistant to search documentation naturally
 ### Advanced Usage
 
 ```text
-# Search specific docset with language filter
-"Use search_docs for 'URLSession' in the apple_api_reference docset with Swift language"
-
 # Explore framework members using drilldown guidance
 "Search for 'SwiftData' then follow the drilldown note to see all members"
 
@@ -300,7 +230,6 @@ DocsetMCP is designed for **name-based searches**, not keyword searching. Follow
 
 ```text
 # Once you know exact names, search for them
-"Search for UIViewController in apple_api_reference with Swift"
 "Find readFile documentation in nodejs docset"
 "Show me the CarPlay framework documentation"
 ```
@@ -316,14 +245,12 @@ When you find container types (frameworks, classes), follow the drilldown guidan
 
 ## How It Works
 
-1. **Multi-Format Support**: Handles both Apple cache format and tarix compression
+1. **Multi-Format Support**: Handles uncompressed docsets, tarix compression, and maybe Apple cache format
 2. **Direct Database Access**: Queries Dash's SQLite databases for fast lookups
 3. **Name-Based Matching**: Only returns entries where search terms match item names (no false positives)
 4. **Smart Ranking**: Prioritizes exact matches, then prefix matches, then substring matches
-5. **Dynamic Type Ordering**: Uses docset configuration files for intelligent result prioritization
-6. **Container Detection**: Automatically detects frameworks/classes with members and provides exploration guidance
-7. **Smart Extraction**: Decompresses Apple's DocC JSON or extracts HTML from tarix archives
-8. **Markdown Formatting**: Converts documentation to readable Markdown
+5. **Smart Extraction**: Decompresses Apple's DocC JSON or extracts HTML from tarix archives
+6. **Markdown Formatting**: Converts documentation to readable Markdown
 
 ## Available Tools
 
@@ -333,11 +260,11 @@ DocsetMCP provides eleven powerful tools for accessing your documentation:
 
 Search and extract documentation from any docset.
 
-| Parameter     | Type   | Description                                | Default        |
-|---------------|--------|--------------------------------------------|----------------|
-| `query`       | string | **Exact name** to search (not keywords)    | *required*     |
-| `docset`      | string | Target docset (e.g., 'nodejs', 'python_3') | *required*     |
-| `max_results` | int    | Number of results (1-10)                   | 3              |
+| Parameter     | Type   | Description                                | Default    |
+|---------------|--------|--------------------------------------------|------------|
+| `query`       | string | **Exact name** to search (not keywords)    | *required* |
+| `docset`      | string | Target docset (e.g., 'nodejs', 'python_3') | *required* |
+| `max_results` | int    | Number of results (1-10)                   | 3          |
 
 ### 📋 `search_cheatsheet`
 
@@ -520,35 +447,6 @@ docsetmcp --docset-path "/custom/path" --list-docsets
 uv build
 ```
 
-## Architecture
-
-### Core Components
-
-- **docsetmcp/server.py**: Main MCP server implementation using FastMCP. Contains the DashExtractor class that handles:
-    - Apple cache format (SHA-1 UUID-based with brotli compression)
-    - Tarix format (tar.gz archives)
-    - SQLite database queries for documentation lookup
-    - HTML to Markdown conversion
-
-- **docsetmcp/config_loader.py**: Configuration system that loads YAML configs for 165+ supported docsets. Provides smart defaults and handles both simple and complex configuration formats.
-
-- **docsetmcp/docsets/**: YAML configuration files for each supported docset, defining:
-    - Docset paths and formats
-    - Language variants and filters
-    - Type priorities for search results
-
-### Key Implementation Details
-
-1. **Multi-Format Support**: The server detects and handles both Apple's modern cache format (using SHA-1 based UUIDs) and the older tarix compression format automatically based on docset configuration.
-
-2. **Caching Strategy**: Extracted documentation is cached in memory (_fs_cache for Apple format, _html_cache for tarix) to improve performance on repeated queries.
-
-3. **Search Algorithm**: Uses SQLite case-insensitive LIKE queries on the optimizedIndex.dsidx database. Results are ranked by match type (exact > prefix > substring) and then by dynamic type ordering from docset configuration files. Only returns entries where the search term matches the item name.
-
-4. **Configuration Loading**: The ConfigLoader applies smart defaults, allowing minimal YAML configs while supporting complex overrides when needed.
-
-5. **Container Type Detection**: Framework, class, and module entries automatically include drilldown notes when they contain additional members, guiding users to search for more specific content.
-
 ## Contributing
 
 ### Reporting Issues
@@ -563,16 +461,6 @@ uv build
 - Add tests for new features
 - Update documentation as needed
 - Keep commits focused and descriptive
-
-## Technical Architecture
-
-DocsetMCP leverages Dash's internal structure for efficient documentation access:
-
-- **Format Support**: Handles both Apple's modern cache format (SHA-1 UUID-based with brotli compression) and traditional tarix archives
-- **Caching Strategy**: In-memory caching for repeated queries
-- **Database Access**: Direct SQLite queries to Dash's optimized indexes
-- **Content Extraction**: Smart extraction with fallback strategies
-- **Type System**: Full type hints for better IDE support
 
 ## License
 
