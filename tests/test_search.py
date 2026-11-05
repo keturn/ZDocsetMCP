@@ -1,24 +1,17 @@
-from collections import defaultdict
 from pathlib import Path
 from textwrap import dedent
 
 import pytest
 
-from docsetmcp.common import ProcessedLanguageConfig
 from docsetmcp.dash_extractor import DashExtractor, _format_search_results
 
 
 class IndexOnlyExtractor(DashExtractor):
-    def __init__(self, path: Path):
-        super().__init__(path)
-        # FIXME: come back to this language determination and filtering
-        self.languages = defaultdict(lambda: ProcessedLanguageConfig(filter="", prefix=""))
-
     @classmethod
     def is_format(cls, path: Path) -> bool:
         return (path / "Contents" / "Resources" / "docSet.dsidx").exists()
 
-    def entry_as_markdown(self, name: str, doc_type: str, path: str, language) -> str | None:
+    def entry_as_markdown(self, name: str, doc_type: str, path: str) -> str | None:
         raise NotImplementedError("IndexOnlyExtractor does not provide full text.")
 
 
@@ -26,11 +19,8 @@ def test_zero_results(pytestconfig):
     extractor = IndexOnlyExtractor(
         pytestconfig.rootpath / "tests" / "data" / "c" / "FragmentExample.docset"
     )
-    additional, records, _e1, _e2, found_exact = extractor._search_records(
-        "xyzzlbax4",  # cspell: disable-line
-        "python",
-        10,
-    )
+    # cspell:disable-next-line
+    additional, records, _e1, _e2, found_exact = extractor._search_records("xyzzlbax4", 10)
     assert additional == 0
     assert len(records) == 0
     assert not found_exact
@@ -53,9 +43,7 @@ def test_zero_results(pytestconfig):
 )
 def test_single_result_has_fragment(pytestconfig, docset, query, expected):
     extractor = IndexOnlyExtractor(pytestconfig.rootpath / "tests" / "data" / "c" / docset)
-    additional, records, exact_name, _e2, found_exact = extractor._search_records(
-        query, "python", 10
-    )
+    additional, records, exact_name, _e2, found_exact = extractor._search_records(query, 10)
     assert additional == 0
     assert found_exact
     assert exact_name == query

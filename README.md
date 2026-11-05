@@ -44,8 +44,7 @@ Add to your MCP config and restart your MCP client. Then try asking something li
 
 ### Documentation Search
 
-- **Multi-Docset Support**: Search across 165+ supported docsets including Apple, Node.js, Python, and more
-- **Language Filtering**: Target specific programming languages within docsets
+- **Multi-Docset Support**: Search across 165+ supported docsets including Node.js, Python, and more
 - **Name-Based Search**: Only returns entries where search terms match item names for precise results
 - **Smart Ranking**: Results ranked by match type (exact > prefix > substring) and dynamic type ordering
 - **Container Guidance**: Framework and class entries show drilldown notes for exploring members
@@ -338,7 +337,6 @@ Search and extract documentation from any docset.
 |---------------|--------|--------------------------------------------|----------------|
 | `query`       | string | **Exact name** to search (not keywords)    | *required*     |
 | `docset`      | string | Target docset (e.g., 'nodejs', 'python_3') | *required*     |
-| `language`    | string | Programming language filter                | docset default |
 | `max_results` | int    | Number of results (1-10)                   | 3              |
 
 ### 📋 `search_cheatsheet`

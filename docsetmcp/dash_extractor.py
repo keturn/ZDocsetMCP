@@ -174,24 +174,21 @@ class DashExtractor(metaclass=ABCMeta):
         case_parts.append("END")
         return "\n".join(case_parts)
 
-    def search(self, query: str, language: str | None = None, max_results: int = 3) -> str:
-        """Search for Apple API documentation"""
-        # Filter by language using config
-        if language not in self.languages:
-            return f"Error: language must be one of {list(self._config['languages'].keys())}"
+    def search(self, query: str, max_results: int = 3) -> str:
+        """Search for a specific documentation entry"""
 
         additional_members, db_results, exact_match_name, exact_match_type, found_exact_match = (
-            self._search_records(query, language, max_results)
+            self._search_records(query, max_results)
         )
 
         if not db_results:
-            return f"No matches found for '{query}' in {language} documentation"
+            return f"No matches found for '{query}' in {self.title} documentation"
 
         # Extract documentation for each result
         results: list[str] = []
         for row in db_results[:max_results]:
             name, doc_type, path, *_ = row
-            if (markdown := self.entry_as_markdown(name, doc_type, path, language)) is not None:
+            if (markdown := self.entry_as_markdown(name, doc_type, path)) is not None:
                 # Add member note if this is the exact match and has members
                 if (
                     found_exact_match
@@ -199,7 +196,7 @@ class DashExtractor(metaclass=ABCMeta):
                     and doc_type == exact_match_type
                     and additional_members > 0
                 ):
-                    type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', language='{language}', max_results=50)` to see all {exact_match_name} members."
+                    type_note = f"\n\n**Note:** The {exact_match_name} {doc_type.lower()} contains {additional_members} additional members not shown. Use `search_docs('{exact_match_name}', max_results=50)` to see all {exact_match_name} members."
                     markdown += type_note
                 results.append(markdown)
 
@@ -227,12 +224,9 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
             return "SELECT name, type, path from searchIndex"
 
     def _search_records(
-        self, query: str, language: str | None, max_results: int
+        self, query: str, max_results: int
     ) -> tuple[int, list[tuple[str, str, str]], str | None, str | None, bool]:
         conn, cursor = self._search_index()
-
-        lang_config = self.languages[language]
-        lang_filter = lang_config["filter"]
 
         query_variations = self._normalize_query(query)
 
@@ -264,11 +258,11 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                 WITH searchIndex3 AS ({search_index_3})
                 SELECT name, type, path
                 FROM searchIndex3
-                WHERE name = ? COLLATE NOCASE AND path LIKE ?
+                WHERE name = ? COLLATE NOCASE
                 ORDER BY {type_order}
                 LIMIT ?
             """,
-                (q, f"%{lang_filter}%", max_results),
+                (q, max_results),
             )
             for row in cursor.fetchall():
                 key = (row[0], row[1])
@@ -335,10 +329,9 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                     SELECT COUNT(*)
                     FROM searchIndex3
                     WHERE path LIKE ?
-                      AND path LIKE ?
                       AND name != ?
                     """,
-                    (doc_path_pattern, f"%{lang_filter}%", exact_match_name),
+                    (doc_path_pattern, exact_match_name),
                 )
                 total_count = cursor.fetchone()
                 if total_count:
@@ -359,10 +352,6 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                     END as rank
                 FROM searchIndex3
                 WHERE name LIKE ? ESCAPE char(0x1B) COLLATE NOCASE
-                AND (
-                    (path LIKE ? AND path LIKE ?)  -- Has language filter
-                    OR (type IN ({type_list}) AND (path LIKE '%/documentation/%' OR path LIKE '%request_key=%'))  -- Or is framework without language
-                )
                 ORDER BY rank, {type_order}, LENGTH(name)
                 LIMIT ?
             """,
@@ -372,8 +361,6 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                     f"{query}%",
                     f"{query}%",
                     f"%{escape_like_pattern(query)}%",
-                    f"%{lang_filter}%",
-                    f"%{lang_filter}%",
                     max_results * 2,
                 ),
             )
@@ -392,7 +379,7 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
         return additional_members, db_results, exact_match_name, exact_match_type, found_exact_match
 
     @abstractmethod
-    def entry_as_markdown(self, name: str, doc_type: str, path: str, language) -> str | None: ...
+    def entry_as_markdown(self, name: str, doc_type: str, path: str) -> str | None: ...
 
     def list_frameworks(self, filter_text: str | None = None) -> str:
         """List available frameworks/modules"""
@@ -560,7 +547,7 @@ class FileSystemDirectoryExtractor(DashExtractor):
         resources = path / "Contents" / "Resources"
         return (resources / "Documents").exists()
 
-    def entry_as_markdown(self, name: str, doc_type: str, path: str, language: str) -> str | None:
+    def entry_as_markdown(self, name: str, doc_type: str, path: str) -> str | None:
         html_content = self._extract_by_path(path)
 
         if not html_content:
@@ -599,7 +586,7 @@ class TarixExtractor(DashExtractor):
         # Cache for extracted HTML content
         self.html_cache: dict[str, str] = {}
 
-    def entry_as_markdown(self, name: str, doc_type: str, path: str, language: str) -> str | None:
+    def entry_as_markdown(self, name: str, doc_type: str, path: str) -> str | None:
         html_content = self._extract_from_tarix(path)
 
         if not html_content:
@@ -722,17 +709,14 @@ class AppleExtractor(DashExtractor):
         # Cache for decompressed fs files
         self.fs_cache: dict[int, bytes] = {}
 
-    def entry_as_markdown(self, name: str, doc_type: str, path: str, language: str):
+    def entry_as_markdown(self, name: str, doc_type: str, path: str):
         if "request_key=" in path:
             request_key: str = path.split("request_key=")[1].split("#")[0]
             # Remove any language parameter from request_key
             if "&" in request_key:
                 request_key = request_key.split("&")[0]
 
-            # If path contains language parameter, use that instead
-            path_language: str = language
-            if "&language=" in path:
-                path_language = path.split("&language=")[1].split("&")[0].split("#")[0]
+            path_language = path.split("&language=")[1].split("&")[0].split("#")[0]
 
             doc = self._extract_by_request_key(request_key, path_language)
 
