@@ -227,7 +227,7 @@ class TestDocsetContent:
         except KeyError:
             pytest.skip("Apple docset not installed")
         else:
-            result = extractor.search("URLSession", language="swift", max_results=1)
+            result = extractor.search("URLSession", max_results=1)
             assert "URLSession" in result
             assert "class" in result.lower() or "protocol" in result.lower()
 
@@ -238,7 +238,7 @@ class TestDocsetContent:
         except KeyError:
             pytest.skip(f"Node.js docset not installed: {list(real_docsets.keys())}")
         else:
-            result = extractor.search("readFile", language="javascript", max_results=1)
+            result = extractor.search("readFile", max_results=1)
             assert "readFile" in result or "fs" in result
 
     def test_python_documentation(self, real_docsets):
@@ -250,7 +250,7 @@ class TestDocsetContent:
             except KeyError:
                 continue
             else:
-                result = extractor.search("list", language="python", max_results=1)
+                result = extractor.search("list", max_results=1)
                 assert "list" in result.lower()
                 return  # Success, exit
 
@@ -270,7 +270,7 @@ class TestEdgeCases:
 
     def test_empty_search_query(self, apple_api_reference):
         """Test handling of empty search query"""
-        result = apple_api_reference.search("", language="swift", max_results=1)
+        result = apple_api_reference.search("", max_results=1)
         # Should return no results or error message
         assert (
             "No matches found" in result
@@ -281,7 +281,7 @@ class TestEdgeCases:
     def test_special_characters_in_search(self, apple_api_reference):
         """Test handling of special characters in search"""
         for query in ["@#$%", "<<<", "'''", '"""']:
-            result = apple_api_reference.search(query, language="swift", max_results=1)
+            result = apple_api_reference.search(query, max_results=1)
             # Should handle gracefully without crashing
             assert isinstance(result, str)
 
@@ -290,16 +290,16 @@ class TestEdgeCases:
         extractor = apple_api_reference
 
         # Test space normalization - "App Intent" should find "AppIntent"
-        result1 = extractor.search("App Intent", language="swift", max_results=1)
-        result2 = extractor.search("AppIntent", language="swift", max_results=1)
-        result3 = extractor.search("app intent", language="swift", max_results=1)
+        result1 = extractor.search("App Intent", max_results=1)
+        result2 = extractor.search("AppIntent", max_results=1)
+        result3 = extractor.search("app intent", max_results=1)
 
         # All three should return results (or same error if not found)
         assert "AppIntent" in result1 or "AppIntent" in result2 or "AppIntent" in result3
 
         # Test another example
-        result4 = extractor.search("URL Session", language="swift", max_results=1)
-        result5 = extractor.search("URLSession", language="swift", max_results=1)
+        result4 = extractor.search("URL Session", max_results=1)
+        result5 = extractor.search("URLSession", max_results=1)
 
         # Both should work
         assert "URLSession" in result4 or "URLSession" in result5
@@ -309,9 +309,9 @@ class TestEdgeCases:
         extractor = apple_api_reference
 
         # Test different case variations
-        result_lower = extractor.search("urlsession", language="swift", max_results=1)
-        result_upper = extractor.search("URLSESSION", language="swift", max_results=1)
-        result_mixed = extractor.search("UrlSession", language="swift", max_results=1)
+        result_lower = extractor.search("urlsession", max_results=1)
+        result_upper = extractor.search("URLSESSION", max_results=1)
+        result_mixed = extractor.search("UrlSession", max_results=1)
 
         # All should find URLSession
         for result in [result_lower, result_upper, result_mixed]:
@@ -320,7 +320,7 @@ class TestEdgeCases:
     def test_improved_error_messages(self, apple_api_reference):
         """Test that error messages distinguish between no matches and extraction failures"""
         # Search for something that definitely doesn't exist
-        result = apple_api_reference.search("xyzabc123nonexistent", language="swift", max_results=1)
+        result = apple_api_reference.search("xyzabc123nonexistent", max_results=1)
 
         # Should say "No matches found" not "couldn't extract documentation"
         assert "No matches found" in result
@@ -358,7 +358,7 @@ class TestEdgeCases:
 
         # Now test our search implementation with more debugging
         print("\nTesting search implementation...")
-        result = extractor.search("CarPlay", language="swift", max_results=30)
+        result = extractor.search("CarPlay", max_results=30)
 
         # Print what we actually got back
         print(f"\nSearch result length: {len(result)} characters")

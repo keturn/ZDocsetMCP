@@ -12,12 +12,7 @@ from docsetmcp.server import extractors
 
 
 @tool()
-def search_docs(
-    query: str,
-    docset: str,
-    language: str | None = None,
-    max_results: int = 3,
-) -> str:
+def search_docs(query: str, docset: str, max_results: int = 3) -> str:
     """
     Search and extract documentation from Dash docsets by EXACT NAME MATCHING.
 
@@ -35,13 +30,11 @@ def search_docs(
                Examples: 'CarPlay', 'UIViewController', 'readFile', 'ModelContext'
                NOT keywords like 'file handling' or 'image processing'
         docset: Docset to search in (e.g., 'apple_api_reference', 'nodejs', 'bash')
-        language: Programming language variant (optional, varies by docset)
-                  For Apple docs: 'swift' or 'objc'
         max_results: Maximum number of results to return (1-10, default: 3)
 
     For discovery/exploration:
-    - Use list_types(docset, language) to see available types (Class, Protocol, etc.)
-    - Use list_entries(docset, type_name, language, name_filter) to browse entries by type
+    - Use list_types(docset) to see available types (Class, Protocol, etc.)
+    - Use list_entries(docset, type_name, name_filter) to browse entries by type
     - Use list_frameworks(docset, filter) to find frameworks containing keywords
 
     Returns:
@@ -57,7 +50,7 @@ def search_docs(
     if not 1 <= max_results <= 10:
         return "Error: max_results must be between 1 and 10"
 
-    return extractor.search(query, language, max_results)
+    return extractor.search(query, max_results)
 
 
 @tool()
@@ -94,14 +87,7 @@ def list_available_docsets() -> str:
         lines.append(f"- **Docset ID:** `{docset_id}`")
         lines.append(f"- **Languages:** {lang_str}")
 
-        # Add example query
-        default_lang = languages[0] if languages else None
-        if default_lang:
-            lines.append(
-                f'- **Example:** `search_docs("YourQuery", docset="{docset_id}", language="{default_lang}")`'
-            )
-        else:
-            lines.append(f'- **Example:** `search_docs("YourQuery", docset="{docset_id}")`')
+        lines.append(f'- **Example:** `search_docs("YourQuery", docset="{docset_id}")`')
 
         lines.append("")  # Empty line between docsets
 
@@ -265,9 +251,7 @@ def list_docsets_by_language(language: str) -> str:
         if extractor.language_names:
             lines.append(f"- **Languages:** {', '.join(extractor.language_names)}")
 
-        lines.append(
-            f'- **Example:** `search_docs("YourQuery", docset="{docset_id}", language="{matched_lang}")`'
-        )
+        lines.append(f'- **Example:** `search_docs("YourQuery", docset="{docset_id}")`')
 
         lines.append("")
 
