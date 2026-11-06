@@ -3,7 +3,7 @@ from textwrap import dedent
 
 import pytest
 
-from docsetmcp.dash_extractor import DashExtractor, _format_search_results
+from docsetmcp.extractors.base import DashExtractor, _format_search_results
 
 
 class IndexOnlyExtractor(DashExtractor):

@@ -87,7 +87,8 @@ class DocsetMCPConfig:
 docsetmcp_config: DocsetMCPConfig = DocsetMCPConfig()
 
 from docsetmcp.cheatsheet_extractor import CheatsheetExtractor
-from docsetmcp.dash_extractor import DashExtractor, initialize_docsets
+from docsetmcp.extractors.api import initialize_docsets
+from docsetmcp.extractors.base import DashExtractor
 
 # Initialize extractors for available docsets (will be populated by initialize_extractors)
 extractors: dict[str, DashExtractor] = {}
