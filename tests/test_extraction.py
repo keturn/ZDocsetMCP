@@ -1,6 +1,6 @@
 import pytest
 
-from docsetmcp.dash_extractor import extract_html_for_anchor
+from docsetmcp.extractors.base import extract_html_for_anchor
 
 
 def test_extract_html_dash_anchor(pytestconfig):

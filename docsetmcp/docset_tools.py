@@ -6,8 +6,8 @@ from fastmcp.tools.function_tool import (
 )  # https://github.com/PrefectHQ/fastmcp/issues/3530
 
 from docsetmcp.common import DocsetInfo
-from docsetmcp.dash_extractor import DashExtractor
 from docsetmcp.db_util import connect_readonly
+from docsetmcp.extractors.base import DashExtractor
 from docsetmcp.server import extractors
 
 
