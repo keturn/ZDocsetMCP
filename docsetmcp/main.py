@@ -13,8 +13,6 @@ from docsetmcp.server import (
     mcp,
 )
 
-initialize_extractors()
-
 mcp.add_provider(FileSystemProvider(Path(__file__).parent))
 
 for web_path, handler in web.routes:

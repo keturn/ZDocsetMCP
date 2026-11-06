@@ -1,6 +1,8 @@
 from collections import defaultdict
 from textwrap import dedent
 
+from fastmcp.server.context import Context
+from fastmcp.server.dependencies import CurrentContext
 from fastmcp.tools.function_tool import (
     tool,
 )  # https://github.com/PrefectHQ/fastmcp/issues/3530
@@ -8,11 +10,12 @@ from fastmcp.tools.function_tool import (
 from docsetmcp.common import DocsetInfo
 from docsetmcp.db_util import connect_readonly
 from docsetmcp.extractors.base import DashExtractor
-from docsetmcp.server import extractors
 
 
 @tool()
-def search_docs(query: str, docset: str, max_results: int = 3) -> str:
+def search_docs(
+    query: str, docset: str, max_results: int = 3, ctx: Context = CurrentContext()
+) -> str:
     """
     Search and extract documentation from Dash docsets by EXACT NAME MATCHING.
 
@@ -41,6 +44,7 @@ def search_docs(query: str, docset: str, max_results: int = 3) -> str:
         Formatted Markdown documentation with exact matches prioritized.
         Container types (frameworks, classes) include drilldown notes for exploring members.
     """
+    extractors = ctx.lifespan_context["extractors"]
     if docset not in extractors:
         available = list(extractors.keys())
         return f"Error: docset '{docset}' not available. Available: {available}"
@@ -54,7 +58,7 @@ def search_docs(query: str, docset: str, max_results: int = 3) -> str:
 
 
 @tool()
-def list_available_docsets() -> str:
+def list_available_docsets(ctx: Context = CurrentContext()) -> str:
     """
     List all available docsets with detailed information for easy querying.
 
@@ -67,6 +71,7 @@ def list_available_docsets() -> str:
     Returns:
         Formatted list of available docsets with usage examples
     """
+    extractors = ctx.lifespan_context["extractors"]
     if not extractors:
         return "No docsets are currently available. Please check your Dash installation."
 
@@ -95,7 +100,9 @@ def list_available_docsets() -> str:
 
 
 @tool()
-def list_frameworks(docset: str, framework: str | None = None) -> str:
+def list_frameworks(
+    docset: str, framework: str | None = None, ctx: Context = CurrentContext()
+) -> str:
     """
     List available frameworks/types in a specific docset.
 
@@ -106,6 +113,7 @@ def list_frameworks(docset: str, framework: str | None = None) -> str:
     Returns:
         List of available frameworks or types
     """
+    extractors = ctx.lifespan_context["extractors"]
     if docset not in extractors:
         available = list(extractors.keys())
         return f"Error: docset '{docset}' not available. Available: {available}"
@@ -114,7 +122,7 @@ def list_frameworks(docset: str, framework: str | None = None) -> str:
 
 
 @tool()
-def list_languages() -> str:
+def list_languages(ctx: Context = CurrentContext()) -> str:
     """
     List all programming languages with available documentation and descriptions.
 
@@ -124,6 +132,7 @@ def list_languages() -> str:
     Returns:
         Detailed list of languages with docsets, descriptions, and usage examples
     """
+    extractors = ctx.lifespan_context["extractors"]
     if not extractors:
         return "No docsets are currently available. Please check your Dash installation."
 
@@ -191,7 +200,7 @@ def list_languages() -> str:
 
 
 @tool()
-def list_docsets_by_language(language: str) -> str:
+def list_docsets_by_language(language: str, ctx: Context = CurrentContext()) -> str:
     """
     Find all docsets that provide documentation for a specific programming language.
 
@@ -204,6 +213,7 @@ def list_docsets_by_language(language: str) -> str:
     Returns:
         Formatted list of docsets with usage examples for the specified language
     """
+    extractors = ctx.lifespan_context["extractors"]
     if not extractors:
         return "No docsets are currently available. Please check your Dash installation."
 
@@ -261,7 +271,7 @@ def list_docsets_by_language(language: str) -> str:
 
 
 @tool()
-def list_types(docset: str, language: str | None = None) -> str:
+def list_types(docset: str, language: str | None = None, ctx: Context = CurrentContext()) -> str:
     """
     List all documentation types available in a docset with examples.
 
@@ -275,6 +285,7 @@ def list_types(docset: str, language: str | None = None) -> str:
     Returns:
         List of types with example entries and counts
     """
+    extractors = ctx.lifespan_context["extractors"]
     if docset not in extractors:
         available = list(extractors.keys())
         return f"Error: docset '{docset}' not available. Available: {available}"
@@ -382,6 +393,7 @@ def list_entries(
     starts_with: str | None = None,
     contains: str | None = None,
     max_results: int = 50,
+    ctx: Context = CurrentContext(),
 ) -> str:
     """
     List documentation entries with flexible filtering options.
@@ -400,6 +412,7 @@ def list_entries(
     Returns:
         List of matching documentation entries
     """
+    extractors = ctx.lifespan_context["extractors"]
     if docset not in extractors:
         available = list(extractors.keys())
         return f"Error: docset '{docset}' not available. Available: {available}"
