@@ -1,4 +1,4 @@
-name: Python application
+name: CI
 
 on:
   push:
@@ -21,4 +21,9 @@ jobs:
     - name: Install dependencies
       run: uv sync
     - name: Test with pytest
-      run: uv run pytest tests/ -v
+      run: uv run pytest --junit-xml=test-report.xml tests/
+    - uses: actions/upload-artifact@v7.0.2  # upload test results
+      if: ${{ !cancelled() }}           # run this step even if previous step failed
+      with:
+        name: test-results
+        path: test-report.xml
