@@ -16,5 +16,5 @@ jobs:
       with:
         artifact: test-results            # artifact name
         name: pytest                      # Name of the check run which will be created
-        path: 'test-results.xml'          # Path to test results (inside artifact .zip)
+        path: 'test-report.xml'          # Path to test results (inside artifact .zip)
         reporter: python-xunit            # Format of test results
