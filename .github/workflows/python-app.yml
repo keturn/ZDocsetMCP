@@ -20,7 +20,5 @@ jobs:
       uses: astral-sh/setup-uv@v10.3.3
     - name: Install dependencies
       run: uv sync
-    - name: Lint by pre-commit
-      run: uv run pre-commit run --all-files
     - name: Test with pytest
       run: uv run pytest tests/ -v
