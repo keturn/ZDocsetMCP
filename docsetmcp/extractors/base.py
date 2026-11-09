@@ -3,7 +3,6 @@ import logging
 import plistlib
 import re
 import sqlite3
-import typing
 from abc import ABCMeta, abstractmethod
 from pathlib import Path
 from plistlib import InvalidFileException
@@ -15,10 +14,6 @@ import yaml
 from docsetmcp.common import ProcessedDocsetConfig
 from docsetmcp.config_loader import ConfigLoader
 from docsetmcp.db_util import connect_readonly, escape_like_pattern, has_column, make_unique
-
-if typing.TYPE_CHECKING:
-    pass
-
 
 logger = logging.getLogger(__name__)
 

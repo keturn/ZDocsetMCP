@@ -1,3 +1,4 @@
+import typing
 from itertools import chain
 from pathlib import Path
 
@@ -5,7 +6,9 @@ from docsetmcp.extractors.apple import AppleExtractor
 from docsetmcp.extractors.base import DashExtractor
 from docsetmcp.extractors.directory import FileSystemDirectoryExtractor
 from docsetmcp.extractors.tarix import TarixExtractor
-from docsetmcp.server import DocsetMCPConfig
+
+if typing.TYPE_CHECKING:
+    from docsetmcp.server import DocsetMCPConfig
 
 EXTRACTORS: list[type[DashExtractor]] = [
     AppleExtractor,
