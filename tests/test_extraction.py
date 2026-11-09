@@ -35,5 +35,15 @@ def test_extract_html_multiple_dt(pytestconfig):
     assert "end of the document" not in region
 
 
+def test_extract_mdn_dl(pytestconfig):
+    html_path = pytestconfig.rootpath / "tests" / "data" / "b" / "mdn-anchors.html"
+    html_src = html_path.read_text()
+    region = extract_html_for_anchor(html_src, "//apple_ref/Attribute/name")
+    assert "name of the form" in region
+    assert "autocomplete" not in region
+    assert "links" not in region
+    assert "end of the document" not in region
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
