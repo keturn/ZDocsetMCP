@@ -479,11 +479,27 @@ def _format_search_results(query: str, results: list[str]) -> str:
 def extract_html_for_anchor(html: str, anchor: str):
     soup: bs4.Tag = bs4.BeautifulSoup(html)
 
-    if target := (soup.find(id=anchor) or soup.find("a", attrs={"name": anchor})):
+    if orig_target := (soup.find(id=anchor) or soup.find("a", attrs={"name": anchor})):
         # The target is typically an anchor or a heading. Move up to its container element for relevant context.
-        soup = target.parent or target
+        if orig_target.parent.name == "dl":
+            soup = _extract_terms_and_definition_from_dl(orig_target)
+        elif orig_target.parent.name == "dt":
+            soup = _extract_terms_and_definition_from_dl(orig_target.parent)
+        else:
+            soup = orig_target.parent
 
     return soup.decode()
+
+
+def _extract_terms_and_definition_from_dl(starting_point: bs4.Tag) -> bs4.Tag:
+    container = starting_point.parent
+    for element in starting_point.previous_siblings:
+        element.decompose()
+    last_element = starting_point.find_next_sibling("dd")
+    if last_element:
+        for element in last_element.next_siblings:
+            element.decompose()
+    return container
 
 
 def infer_primary_language(config: ProcessedDocsetConfig) -> str:
