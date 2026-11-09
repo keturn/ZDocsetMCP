@@ -237,49 +237,22 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
         search_index_3 = self._search_index_cte(cursor)
 
         # Try exact match with all query variations (case-insensitive)
-        for q in query_variations:
-            cursor.execute(
-                f"""
-                WITH searchIndex3 AS ({search_index_3})
-                SELECT name, type, path
-                FROM searchIndex3
-                WHERE name = ? COLLATE NOCASE
-                ORDER BY {type_order}
-                LIMIT ?
-            """,
-                (q, max_results),
-            )
-            for row in cursor.fetchall():
-                key = (row[0], row[1])
-                if key not in seen_entries:
-                    all_results.append(row)
-                    seen_entries.add(key)
-            if len(all_results) >= max_results:
-                break
-
-        # If we need more results, try framework-level entries without language filter
-        if len(all_results) < max_results:
-            for q in query_variations:
-                cursor.execute(
-                    f"""
-                    WITH searchIndex3 AS ({search_index_3})
-                    SELECT name, type, path
-                    FROM searchIndex3
-                    WHERE name = ? COLLATE NOCASE
-                    AND type IN ({type_list})
-                    AND (path LIKE '%/documentation/%' OR path LIKE '%request_key=%')
-                    ORDER BY {type_order}
-                    LIMIT ?
-                """,
-                    (q, max_results - len(all_results)),
-                )
-                for row in cursor.fetchall():
-                    key = (row[0], row[1])
-                    if key not in seen_entries:
-                        all_results.append(row)
-                        seen_entries.add(key)
-                if len(all_results) >= max_results:
-                    break
+        cursor.execute(
+            f"""
+            WITH searchIndex3 AS ({search_index_3})
+            SELECT DISTINCT name, type, path
+            FROM searchIndex3
+            WHERE name COLLATE NOCASE IN (SELECT value FROM json_each(:query))
+            ORDER BY {type_order}
+            LIMIT :max
+        """,
+            {"query": json.dumps(query_variations), "max": max_results},
+        )
+        for row in cursor.fetchall():
+            key = (row[0], row[1])
+            if key not in seen_entries:
+                all_results.append(row)
+                seen_entries.add(key)
 
         # Check if we found an exact match in the results
         found_exact_match: bool = False
@@ -323,31 +296,19 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                     additional_members = total_count[0]
 
         # If we still need more results, try broader search
-        if len(all_results) < max_results:
+        if not found_exact_match and len(all_results) < max_results:
             cursor.execute(
                 f"""
                 WITH searchIndex3 AS ({search_index_3})
-                SELECT name, type, path,
-                    CASE
-                        WHEN name = ? COLLATE NOCASE THEN 0
-                        WHEN type IN ({type_list}) AND name = ? COLLATE NOCASE THEN 1
-                        WHEN name LIKE ? COLLATE NOCASE THEN 2
-                        WHEN type IN ({type_list}) AND name LIKE ? COLLATE NOCASE THEN 3
-                        ELSE 4
-                    END as rank
-                FROM searchIndex3
-                WHERE name LIKE ? ESCAPE char(0x1B) COLLATE NOCASE
-                ORDER BY rank, {type_order}, LENGTH(name)
-                LIMIT ?
+                SELECT name, type, path FROM searchIndex3
+                WHERE name LIKE :prefix ESCAPE char(0x1B)
+                ORDER BY {type_order}, LENGTH(name), name COLLATE NOCASE
+                LIMIT :max
             """,
-                (
-                    query,
-                    query,
-                    f"{query}%",
-                    f"{query}%",
-                    f"%{escape_like_pattern(query)}%",
-                    max_results * 2,
-                ),
+                {
+                    "prefix": f"{escape_like_pattern(query)}%",
+                    "max": max_results - len(all_results),
+                },
             )
             for row in cursor.fetchall():
                 if len(all_results) >= max_results:
