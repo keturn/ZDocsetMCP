@@ -146,19 +146,6 @@ class DashExtractor(metaclass=ABCMeta):
             variations.append(no_spaces)
         return variations
 
-    def _get_type_order_clause(self) -> str:
-        """Generate SQL CASE clause for type ordering based on config"""
-        if "types" not in self._config or not self._config["types"]:
-            return "0"  # No ordering if types not configured
-
-        case_parts = ["CASE type"]
-        # types is a dict mapping type_name -> priority_index
-        for type_name, priority in self._config["types"].items():
-            case_parts.append(f"    WHEN '{type_name}' THEN {priority}")
-        case_parts.append(f"    ELSE {len(self._config['types'])}")
-        case_parts.append("END")
-        return "\n".join(case_parts)
-
     def search(self, query: str, max_results: int = 3) -> str:
         """Search for a specific documentation entry"""
 
@@ -215,9 +202,6 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
 
         query_variations = self._normalize_query(query)
 
-        # Get dynamic type ordering
-        type_order = self._get_type_order_clause()
-
         # Get top-level types from configuration
         if self._config.get("types"):
             # Sort types by their priority value and take the first few
@@ -243,10 +227,14 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
             SELECT DISTINCT name, type, path
             FROM searchIndex3
             WHERE name COLLATE NOCASE IN (SELECT value FROM json_each(:query))
-            ORDER BY {type_order}
+            ORDER BY :type_order ->> type OR 999
             LIMIT :max
         """,
-            {"query": json.dumps(query_variations), "max": max_results},
+            {
+                "query": json.dumps(query_variations),
+                "type_order": json.dumps(self._config["types"]) or {},
+                "max": max_results,
+            },
         )
         for row in cursor.fetchall():
             key = (row[0], row[1])
@@ -302,11 +290,12 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                 WITH searchIndex3 AS ({search_index_3})
                 SELECT name, type, path FROM searchIndex3
                 WHERE name LIKE :prefix ESCAPE char(0x1B)
-                ORDER BY {type_order}, LENGTH(name), name COLLATE NOCASE
+                ORDER BY :type_order ->> type OR 999, LENGTH(name), name COLLATE NOCASE
                 LIMIT :max
             """,
                 {
                     "prefix": f"{escape_like_pattern(query)}%",
+                    "type_order": json.dumps(self._config["types"]) or {},
                     "max": max_results - len(all_results),
                 },
             )
