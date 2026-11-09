@@ -481,7 +481,21 @@ def extract_html_for_anchor(html: str, anchor: str):
 
     if target := (soup.find(id=anchor) or soup.find("a", attrs={"name": anchor})):
         # The target is typically an anchor or a heading. Move up to its container element for relevant context.
-        soup = target.parent or target
+        target = target.parent or target
+
+        if target.name == "dt":
+            # We landed in a <dt> and need its following <dd> as well.
+            for element in target.previous_siblings:
+                element.decompose()
+            while target.next_element:
+                target = target.next_element
+                if target.name == "dd":
+                    for element in target.next_siblings:
+                        element.decompose()
+                    break
+            soup = target.parent
+        else:
+            soup = target
 
     return soup.decode()
 
