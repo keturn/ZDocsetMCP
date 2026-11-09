@@ -3,7 +3,6 @@ import logging
 import plistlib
 import re
 import sqlite3
-import typing
 from abc import ABCMeta, abstractmethod
 from pathlib import Path
 from plistlib import InvalidFileException
@@ -15,10 +14,6 @@ import yaml
 from docsetmcp.common import ProcessedDocsetConfig
 from docsetmcp.config_loader import ConfigLoader
 from docsetmcp.db_util import connect_readonly, escape_like_pattern, has_column, make_unique
-
-if typing.TYPE_CHECKING:
-    pass
-
 
 logger = logging.getLogger(__name__)
 
@@ -151,19 +146,6 @@ class DashExtractor(metaclass=ABCMeta):
             variations.append(no_spaces)
         return variations
 
-    def _get_type_order_clause(self) -> str:
-        """Generate SQL CASE clause for type ordering based on config"""
-        if "types" not in self._config or not self._config["types"]:
-            return "0"  # No ordering if types not configured
-
-        case_parts = ["CASE type"]
-        # types is a dict mapping type_name -> priority_index
-        for type_name, priority in self._config["types"].items():
-            case_parts.append(f"    WHEN '{type_name}' THEN {priority}")
-        case_parts.append(f"    ELSE {len(self._config['types'])}")
-        case_parts.append("END")
-        return "\n".join(case_parts)
-
     def search(self, query: str, max_results: int = 3) -> str:
         """Search for a specific documentation entry"""
 
@@ -220,9 +202,6 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
 
         query_variations = self._normalize_query(query)
 
-        # Get dynamic type ordering
-        type_order = self._get_type_order_clause()
-
         # Get top-level types from configuration
         if self._config.get("types"):
             # Sort types by their priority value and take the first few
@@ -242,49 +221,26 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
         search_index_3 = self._search_index_cte(cursor)
 
         # Try exact match with all query variations (case-insensitive)
-        for q in query_variations:
-            cursor.execute(
-                f"""
-                WITH searchIndex3 AS ({search_index_3})
-                SELECT name, type, path
-                FROM searchIndex3
-                WHERE name = ? COLLATE NOCASE
-                ORDER BY {type_order}
-                LIMIT ?
-            """,
-                (q, max_results),
-            )
-            for row in cursor.fetchall():
-                key = (row[0], row[1])
-                if key not in seen_entries:
-                    all_results.append(row)
-                    seen_entries.add(key)
-            if len(all_results) >= max_results:
-                break
-
-        # If we need more results, try framework-level entries without language filter
-        if len(all_results) < max_results:
-            for q in query_variations:
-                cursor.execute(
-                    f"""
-                    WITH searchIndex3 AS ({search_index_3})
-                    SELECT name, type, path
-                    FROM searchIndex3
-                    WHERE name = ? COLLATE NOCASE
-                    AND type IN ({type_list})
-                    AND (path LIKE '%/documentation/%' OR path LIKE '%request_key=%')
-                    ORDER BY {type_order}
-                    LIMIT ?
-                """,
-                    (q, max_results - len(all_results)),
-                )
-                for row in cursor.fetchall():
-                    key = (row[0], row[1])
-                    if key not in seen_entries:
-                        all_results.append(row)
-                        seen_entries.add(key)
-                if len(all_results) >= max_results:
-                    break
+        cursor.execute(
+            f"""
+            WITH searchIndex3 AS ({search_index_3})
+            SELECT DISTINCT name, type, path
+            FROM searchIndex3
+            WHERE name COLLATE NOCASE IN (SELECT value FROM json_each(:query))
+            ORDER BY :type_order ->> type OR 999
+            LIMIT :max
+        """,
+            {
+                "query": json.dumps(query_variations),
+                "type_order": json.dumps(self._config["types"]) or {},
+                "max": max_results,
+            },
+        )
+        for row in cursor.fetchall():
+            key = (row[0], row[1])
+            if key not in seen_entries:
+                all_results.append(row)
+                seen_entries.add(key)
 
         # Check if we found an exact match in the results
         found_exact_match: bool = False
@@ -328,31 +284,20 @@ Try opening Dash and ensuring the '{self._config["name"]}' docset is fully downl
                     additional_members = total_count[0]
 
         # If we still need more results, try broader search
-        if len(all_results) < max_results:
+        if not found_exact_match and len(all_results) < max_results:
             cursor.execute(
                 f"""
                 WITH searchIndex3 AS ({search_index_3})
-                SELECT name, type, path,
-                    CASE
-                        WHEN name = ? COLLATE NOCASE THEN 0
-                        WHEN type IN ({type_list}) AND name = ? COLLATE NOCASE THEN 1
-                        WHEN name LIKE ? COLLATE NOCASE THEN 2
-                        WHEN type IN ({type_list}) AND name LIKE ? COLLATE NOCASE THEN 3
-                        ELSE 4
-                    END as rank
-                FROM searchIndex3
-                WHERE name LIKE ? ESCAPE char(0x1B) COLLATE NOCASE
-                ORDER BY rank, {type_order}, LENGTH(name)
-                LIMIT ?
+                SELECT name, type, path FROM searchIndex3
+                WHERE name LIKE :prefix ESCAPE char(0x1B)
+                ORDER BY :type_order ->> type OR 999, LENGTH(name), name COLLATE NOCASE
+                LIMIT :max
             """,
-                (
-                    query,
-                    query,
-                    f"{query}%",
-                    f"{query}%",
-                    f"%{escape_like_pattern(query)}%",
-                    max_results * 2,
-                ),
+                {
+                    "prefix": f"{escape_like_pattern(query)}%",
+                    "type_order": json.dumps(self._config["types"]) or {},
+                    "max": max_results - len(all_results),
+                },
             )
             for row in cursor.fetchall():
                 if len(all_results) >= max_results:

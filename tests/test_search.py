@@ -26,6 +26,37 @@ def test_zero_results(pytestconfig):
     assert not found_exact
 
 
+def test_exact_result_not_used_as_prefix(pytestconfig):
+    extractor = IndexOnlyExtractor(
+        pytestconfig.rootpath / "tests" / "data" / "c" / "FragmentExample.docset"
+    )
+    additional, records, exact_name, _e2, found_exact = extractor._search_records(
+        "itertools.chain", 10
+    )
+    assert found_exact
+    assert records[0][0] == "itertools.chain"
+    assert len(records) == 1
+    # Notably, this shouldn't return itertools.chain.from_iterable
+
+
+def test_prefix_search(pytestconfig):
+    extractor = IndexOnlyExtractor(
+        pytestconfig.rootpath / "tests" / "data" / "c" / "FragmentExample.docset"
+    )
+    additional, records, _e1, _e2, found_exact = extractor._search_records("itertools.c", 10)
+    assert not found_exact
+    names = {record[0].split(".", 1)[1] for record in records}
+    assert names == {
+        "chain",
+        "chain.from_iterable",
+        "combinations",
+        "combinations_with_replacement",
+        "compress",
+        "count",
+        "cycle",
+    }
+
+
 @pytest.mark.parametrize(
     "docset,query,expected",
     [
